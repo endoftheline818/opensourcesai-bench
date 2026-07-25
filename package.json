@@ -1,0 +1,44 @@
+{
+  "name": "@opensourcesai/bench",
+  "version": "0.1.0",
+  "description": "A local-only Ollama inference benchmark implementing osai-bench/1.",
+  "type": "module",
+  "bin": {
+    "osai-bench": "src/cli.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./derivation": "./src/derivation/index.js"
+  },
+  "files": [
+    "src",
+    "schema",
+    "fixtures",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "check": "node --check src/cli.js && node --test",
+    "prepack": "npm run check"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/endoftheline818/opensourcesai-bench.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "ollama",
+    "benchmark",
+    "local-llm",
+    "inference"
+  ]
+}
