@@ -20,22 +20,32 @@ export const SHORT_PROMPT =
 const LONG_PROMPT_SENTENCE =
   "Local inference benchmarks compare repeatable workloads while preserving measured runtime counters and configuration details for later analysis.";
 
-// Sized to sit clearly BELOW w3's num_ctx.
+// Sized from MEASURED token counts, not estimated ones.
 //
-// An earlier revision used 200 repetitions — ~29,900 characters, roughly
-// 7,500-8,300 tokens — against a num_ctx of 4,096. Ollama truncated the prompt
-// to exactly num_ctx, and because the old rule compared prompt_eval_count to an
-// *intended* 4,096, the truncated count matched the intended count and the
-// check passed. W3 reported five valid passes while measuring a silently
-// truncated prompt, which would have produced a confident and wrong answer to
-// the open §12.5 saturation question.
+// History, because both errors are instructive. v1.1 used 200 repetitions
+// (~29,900 characters) against a num_ctx of 4,096; the runtime truncated it to
+// exactly num_ctx, and because the validity rule compared prompt_eval_count
+// against an *intended* 4,096, the truncated count matched and every pass
+// validated. W3 reported clean measurements of a prompt it never processed in
+// full. The correction dropped to 80 repetitions using a character-based
+// estimate of 3.4-4.6 characters per token.
 //
-// 80 repetitions is ~11,960 characters: roughly 2,650-3,420 tokens across
-// plausible tokenizers, leaving headroom under 4,096 at both ends of that
-// estimate. The band is wide because token counts are model-dependent — which
-// is exactly why validity now checks a range plus an explicit truncation
-// signature instead of proximity to a guessed exact value.
-export const LONG_PROMPT_REPETITIONS = 80;
+// That estimate was wrong in the other direction. Measured against
+// llama3.1:8b, 80 repetitions is 11,910 characters and 1,770 tokens — 6.73
+// characters per token, roughly 50% more efficient than assumed, because this
+// sentence is built from long words that each tokenize to a single token. W3
+// then fell below its 2,000-token saturation floor and failed all five passes.
+//
+// 120 repetitions is ~17,891 characters, ~2,659 tokens on that tokenizer.
+// Chosen so the count clears the 2,000 floor even on a tokenizer 25% MORE
+// efficient than measured, and stays under num_ctx with >10% headroom even on
+// one 25% LESS efficient — both directions, because the two failures above were
+// one of each.
+//
+// The lesson worth keeping: character-based token estimation carries about a
+// 2x spread and is unusable for sizing near a boundary. Re-measure with
+// scripts/diagnose-prompts.js after any prompt change rather than re-deriving.
+export const LONG_PROMPT_REPETITIONS = 120;
 
 export const LONG_PROMPT = Array.from(
   { length: LONG_PROMPT_REPETITIONS },

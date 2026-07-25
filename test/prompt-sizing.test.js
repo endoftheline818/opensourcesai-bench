@@ -3,33 +3,51 @@ import assert from "node:assert/strict";
 import { LONG_PROMPT, SHORT_PROMPT, WORKLOADS } from "../src/protocol.js";
 import { validatePass } from "../src/derivation/validity.js";
 
-// These tests derive their expectations from the ACTUAL prompt constants rather
-// than from fixtures.
+// Prompt sizing checked against MEASURED tokenization, not character estimates.
 //
-// Every other test in this suite feeds the derivation layer fixture values that
-// were written to match what the code expects — `prompt_eval_count: 32` for w2,
-// `4096` for w3. Those satisfy any rule by construction, so the suite could
-// prove the code self-consistent while the prompts it actually sends bore no
-// relation to the counts being asserted. That is how a w3 prompt roughly twice
-// the size of its own context window passed 62 green tests.
+// Two rounds of this went wrong in opposite directions, which is the whole
+// reason this file is written the way it is:
 //
-// Exact tokenization is model-dependent and cannot be computed without a
-// tokenizer, so these tests bound it: they assert that across the whole
-// plausible characters-per-token range, every prompt still satisfies its own
-// workload's rules. A prompt that only works at one end of that range is a
-// prompt waiting to fail on somebody else's model.
+//   1. v1.1 sized W3 at "~4096 tokens" and shipped ~7,500-8,300. The runtime
+//      truncated to num_ctx, and because validity compared the count against an
+//      intended 4,096, the truncated value matched and every pass validated.
+//   2. The correction used a character estimate of 3.4-4.6 chars/token and
+//      produced 1,770 actual tokens against a 2,000 floor — every W3 pass
+//      failed. The real ratio is 6.73.
+//
+// Character-based token estimation carries roughly a 2x spread and is unusable
+// for sizing near a boundary. So these tests anchor on ratios actually measured
+// with scripts/diagnose-prompts.js, and treat a change in prompt length as a
+// reason to re-measure rather than re-derive.
 
-// English prose runs about 4 characters per token. Text dense in digits,
-// newlines and punctuation tokenizes less efficiently, so the low end of this
-// range is deliberately pessimistic — it produces the HIGHEST token estimate.
-const CHARS_PER_TOKEN_MIN = 3.4;
-const CHARS_PER_TOKEN_MAX = 4.6;
+// Measured on llama3.1:8b (Ollama 0.32.3) via scripts/diagnose-prompts.js.
+// Re-measure after ANY prompt edit; do not adjust these by reasoning.
+const MEASURED = {
+  short: { chars: 153, tokens: 45 },
+  longPerRepetition: { chars: 11910 / 80, tokens: 1770 / 80 },
+};
 
-function tokenEstimateRange(text) {
+const SHORT_RATIO = MEASURED.short.chars / MEASURED.short.tokens; // ~3.40
+const LONG_RATIO =
+  MEASURED.longPerRepetition.chars / MEASURED.longPerRepetition.tokens; // ~6.73
+
+// Tokenizers differ between model families, so allow a margin around the
+// measured ratio rather than treating one model as universal. +/-25% is wide
+// enough to cover llama/qwen/mistral variation and still narrow enough to catch
+// a prompt that has drifted materially.
+const RATIO_MARGIN = 0.25;
+
+function tokenRange(chars, measuredRatio) {
   return {
-    high: Math.ceil(text.length / CHARS_PER_TOKEN_MIN),
-    low: Math.floor(text.length / CHARS_PER_TOKEN_MAX),
+    // A more efficient tokenizer yields FEWER tokens: tests the band floor.
+    low: Math.floor(chars / (measuredRatio * (1 + RATIO_MARGIN))),
+    // A less efficient tokenizer yields MORE tokens: tests the num_ctx ceiling.
+    high: Math.ceil(chars / (measuredRatio * (1 - RATIO_MARGIN))),
   };
+}
+
+function ratioFor(workload) {
+  return workload.prompt === LONG_PROMPT ? LONG_RATIO : SHORT_RATIO;
 }
 
 function passWith(promptTokens, workload) {
@@ -47,56 +65,82 @@ function passWith(promptTokens, workload) {
   );
 }
 
+test("measured ratios still describe the current prompts", () => {
+  // Drift detector. If a prompt is edited, its character count moves and the
+  // stored ratio no longer applies — re-run scripts/diagnose-prompts.js and
+  // update MEASURED rather than nudging the numbers until this passes.
+  assert.equal(
+    SHORT_PROMPT.length,
+    MEASURED.short.chars,
+    "SHORT_PROMPT changed since it was last measured — re-measure it",
+  );
+  const perRepetition = LONG_PROMPT.length / WORKLOADS.w3.prompt.split("\n").length;
+  assert.ok(
+    Math.abs(perRepetition - MEASURED.longPerRepetition.chars) < 2,
+    `LONG_PROMPT's per-repetition length is ${perRepetition.toFixed(1)} chars but ` +
+      `${MEASURED.longPerRepetition.chars.toFixed(1)} was measured — re-measure it`,
+  );
+});
+
 test("every prompt fits strictly inside its own context window", () => {
   for (const workload of Object.values(WORKLOADS)) {
-    const { high } = tokenEstimateRange(workload.prompt);
+    const { high } = tokenRange(workload.prompt.length, ratioFor(workload));
     assert.ok(
       high < workload.numCtx,
-      `${workload.id}: prompt is ~${high} tokens at the pessimistic end but ` +
-        `num_ctx is ${workload.numCtx}. The runtime would truncate it, and a ` +
-        `truncated prompt cannot be compared against an untruncated one.`,
+      `${workload.id}: ~${high} tokens against num_ctx ${workload.numCtx} on a ` +
+        "less efficient tokenizer. The runtime would truncate, and a truncated " +
+        "prompt is not comparable with an untruncated one.",
     );
   }
 });
 
-test("W3 keeps real headroom under num_ctx, not a margin of a few tokens", () => {
-  const { high } = tokenEstimateRange(LONG_PROMPT);
-  const headroom = (WORKLOADS.w3.numCtx - high) / WORKLOADS.w3.numCtx;
+test("W3 clears its saturation floor even on an efficient tokenizer", () => {
+  // This is the check that was missing. The previous version asserted the
+  // *pessimistic* estimate cleared the floor, which is the wrong direction — a
+  // more efficient tokenizer produces fewer tokens, and that is exactly how
+  // 1,770 got through a check intended to guarantee at least 2,000.
+  const { low } = tokenRange(LONG_PROMPT.length, LONG_RATIO);
   assert.ok(
-    headroom >= 0.1,
-    `W3 leaves only ${(headroom * 100).toFixed(1)}% headroom under num_ctx. ` +
-      "Token counts vary by model; a thin margin means truncation on the first " +
-      "tokenizer that splits text less efficiently than assumed.",
+    low >= WORKLOADS.w3.promptTokenRange.min,
+    `W3 yields ~${low} tokens on an efficient tokenizer but its floor is ` +
+      `${WORKLOADS.w3.promptTokenRange.min}. Prefill would fail every pass.`,
   );
 });
 
-test("estimated prompt sizes satisfy their own workload's validity band", () => {
+test("W3 keeps real headroom under num_ctx", () => {
+  const { high } = tokenRange(LONG_PROMPT.length, LONG_RATIO);
+  const headroom = (WORKLOADS.w3.numCtx - high) / WORKLOADS.w3.numCtx;
+  assert.ok(
+    headroom >= 0.1,
+    `W3 leaves only ${(headroom * 100).toFixed(1)}% headroom under num_ctx.`,
+  );
+});
+
+test("both ends of each prompt's range satisfy its own validity band", () => {
   for (const workload of Object.values(WORKLOADS)) {
     if (workload.promptTokenRange === null) continue;
-    const { low, high } = tokenEstimateRange(workload.prompt);
+    const { low, high } = tokenRange(workload.prompt.length, ratioFor(workload));
     for (const [label, estimate] of [
-      ["low", low],
-      ["high", high],
+      ["efficient", low],
+      ["inefficient", high],
     ]) {
       const result = passWith(estimate, workload);
       assert.equal(
         result.valid,
         true,
-        `${workload.id}: a ${label} estimate of ${estimate} tokens fails its own ` +
-          `band [${workload.promptTokenRange.min}, ${workload.promptTokenRange.max}] — ` +
-          `reasons: ${result.reasons.map((r) => r.code).join(", ")}`,
+        `${workload.id}: an ${label} tokenizer yields ~${estimate} tokens, which ` +
+          `fails its band [${workload.promptTokenRange.min}, ${workload.promptTokenRange.max}] — ` +
+          `${result.reasons.map((r) => r.code).join(", ")}`,
       );
     }
   }
 });
 
-test("SHORT_PROMPT stays short enough to be interactively realistic", () => {
-  // W2 measures time to first token as a user experiences it. A prompt that
-  // drifted long would quietly turn a latency measurement into a prefill one.
-  const { high } = tokenEstimateRange(SHORT_PROMPT);
-  assert.ok(
-    high <= 64,
-    `SHORT_PROMPT is ~${high} tokens at the pessimistic end; W2 would no longer ` +
-      "be measuring short-prompt latency.",
-  );
+test("the measured short-prompt count sits inside the W2/W4 band", () => {
+  // 45 tokens measured, band 20-64. Recorded as a regression anchor: the band
+  // was set from an estimate of 33-42 and the real value landed outside it,
+  // which held only because the band was generous.
+  for (const workload of [WORKLOADS.w2, WORKLOADS.w4]) {
+    assert.equal(passWith(MEASURED.short.tokens, workload).valid, true);
+  }
 });
