@@ -2,6 +2,349 @@
   "fixtureType": "synthetic-misconfigured-ollama-runtime-responses",
   "realHardware": false,
   "warning": "Synthetic negative-control placeholder. It does not satisfy the §11 real-hardware release gate.",
+  "tagsResponse": {
+    "models": [
+      {
+        "name": "fixture-model:8b-q4",
+        "model": "fixture-model:8b-q4",
+        "size": 10000000000,
+        "digest": "sha256:synthetic-misconfigured",
+        "details": {
+          "family": "fixture",
+          "parameter_size": "8B",
+          "quantization_level": "Q4_K_M"
+        }
+      }
+    ]
+  },
+  "showResponse": {
+    "details": {
+      "family": "fixture",
+      "parameter_size": "8B",
+      "quantization_level": "Q4_K_M"
+    },
+    "parameters": "synthetic fixture parameters",
+    "layer_assignment": {
+      "total_layers": 33,
+      "gpu_layers": 26,
+      "cpu_layers": 7
+    }
+  },
+  "workloads": {
+    "w1": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 3500000000,
+              "load_duration": 3000000000,
+              "prompt_eval_count": 5,
+              "prompt_eval_duration": 100000000,
+              "eval_count": 1,
+              "eval_duration": 200000000
+            }
+          ],
+          "timeToFirstTokenMs": 3300
+        }
+      ]
+    ],
+    "w2": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2200000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 200000000,
+              "eval_count": 128,
+              "eval_duration": 1900000000
+            }
+          ],
+          "timeToFirstTokenMs": 225
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2180000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 195000000,
+              "eval_count": 128,
+              "eval_duration": 1880000000
+            }
+          ],
+          "timeToFirstTokenMs": 215
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2210000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 205000000,
+              "eval_count": 128,
+              "eval_duration": 1910000000
+            }
+          ],
+          "timeToFirstTokenMs": 230
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2190000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 198000000,
+              "eval_count": 128,
+              "eval_duration": 1890000000
+            }
+          ],
+          "timeToFirstTokenMs": 220
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2170000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 192000000,
+              "eval_count": 128,
+              "eval_duration": 1870000000
+            }
+          ],
+          "timeToFirstTokenMs": 210
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2200000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 200000000,
+              "eval_count": 128,
+              "eval_duration": 1900000000
+            }
+          ],
+          "timeToFirstTokenMs": 225
+        }
+      ]
+    ],
+    "w3": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2200000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 3100,
+              "prompt_eval_duration": 2000000000,
+              "eval_count": 1,
+              "eval_duration": 100000000
+            }
+          ],
+          "timeToFirstTokenMs": 2050
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2150000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 3100,
+              "prompt_eval_duration": 1950000000,
+              "eval_count": 1,
+              "eval_duration": 100000000
+            }
+          ],
+          "timeToFirstTokenMs": 2000
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2250000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 3100,
+              "prompt_eval_duration": 2050000000,
+              "eval_count": 1,
+              "eval_duration": 100000000
+            }
+          ],
+          "timeToFirstTokenMs": 2100
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2180000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 3100,
+              "prompt_eval_duration": 1980000000,
+              "eval_count": 1,
+              "eval_duration": 100000000
+            }
+          ],
+          "timeToFirstTokenMs": 2030
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2170000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 3100,
+              "prompt_eval_duration": 1970000000,
+              "eval_count": 1,
+              "eval_duration": 100000000
+            }
+          ],
+          "timeToFirstTokenMs": 2020
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 2200000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 3100,
+              "prompt_eval_duration": 2000000000,
+              "eval_count": 1,
+              "eval_duration": 100000000
+            }
+          ],
+          "timeToFirstTokenMs": 2050
+        }
+      ]
+    ],
+    "w4": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 26000000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 1000000000,
+              "eval_count": 512,
+              "eval_duration": 25000000000
+            }
+          ],
+          "timeToFirstTokenMs": 1100
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 26000000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 1000000000,
+              "eval_count": 512,
+              "eval_duration": 25000000000
+            }
+          ],
+          "timeToFirstTokenMs": 1100
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 26000000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 1000000000,
+              "eval_count": 512,
+              "eval_duration": 25000000000
+            }
+          ],
+          "timeToFirstTokenMs": 1100
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 26000000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 1000000000,
+              "eval_count": 512,
+              "eval_duration": 25000000000
+            }
+          ],
+          "timeToFirstTokenMs": 1100
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 26000000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 1000000000,
+              "eval_count": 512,
+              "eval_duration": 25000000000
+            }
+          ],
+          "timeToFirstTokenMs": 1100
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 26000000000,
+              "load_duration": 1000000,
+              "prompt_eval_count": 32,
+              "prompt_eval_duration": 1000000000,
+              "eval_count": 512,
+              "eval_duration": 25000000000
+            }
+          ],
+          "timeToFirstTokenMs": 1100
+        }
+      ]
+    ]
+  },
+  "schemaVersion": "osai-bench-fixture/2",
   "condition": "partial CPU offload, oversized context, and weights larger than VRAM",
   "runtimeInspection": {
     "layer_assignment": {
@@ -21,20 +364,5 @@
   },
   "model": {
     "weightsBytes": 10000000000
-  },
-  "sustainedGenerationResponse": {
-    "chunks": [
-      {
-        "done": true,
-        "response": "synthetic",
-        "total_duration": 26000000000,
-        "load_duration": 1000000,
-        "prompt_eval_count": 32,
-        "prompt_eval_duration": 1000000000,
-        "eval_count": 512,
-        "eval_duration": 25000000000
-      }
-    ],
-    "timeToFirstTokenMs": 1100
   }
 }

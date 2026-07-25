@@ -2,6 +2,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { PROTOCOL_VERSION } from "../protocol.js";
 import { CLIENT_VERSION } from "../version.js";
+import {
+  FIXTURE_SCHEMA_VERSION,
+  validateFixtureFormat,
+} from "../fixture-format.js";
 
 const MEASUREMENT_FIELDS = Object.freeze([
   "total_duration",
@@ -12,11 +16,10 @@ const MEASUREMENT_FIELDS = Object.freeze([
   "eval_duration",
 ]);
 
-const FIXTURE_COUNTS = Object.freeze({ w1: 1, w2: 6, w3: 6, w4: 6 });
 const REDACTION_NOTES = Object.freeze([
   "Only the selected /api/tags model is retained; other installed models are omitted.",
   "/api/show is allowlisted; modelfile, template, license, parameters, and all other unneeded fields are omitted.",
-  "Only the final measurement chunk is retained for each workload response; model output and intermediate chunks are omitted.",
+  "Every retry attempt is retained in order, but only its final measurement chunk is kept; model output and intermediate chunks are omitted.",
   "Prompt and request bodies are never captured.",
   "Path-like model identifiers are replaced with [REDACTED_LOCAL_PATH].",
 ]);
@@ -148,14 +151,20 @@ function sanitizedWorkloadResponse(response) {
 
 function sanitizedWorkloads(workloads) {
   const result = {};
-  for (const [id, expectedCount] of Object.entries(FIXTURE_COUNTS)) {
-    const responses = workloads?.[id];
-    if (!Array.isArray(responses) || responses.length !== expectedCount) {
-      throw new Error(
-        `Cannot capture fixture: ${id} needs ${expectedCount} responses, received ${responses?.length ?? 0}`,
-      );
+  for (const [id, slots] of Object.entries(workloads ?? {})) {
+    if (!Array.isArray(slots)) {
+      throw new Error(`Cannot capture fixture: ${id} slots must be an array`);
     }
-    result[id] = responses.map(sanitizedWorkloadResponse);
+    result[id] = slots.map((attempts, slotIndex) => {
+      if (!Array.isArray(attempts)) {
+        throw new Error(
+          `Cannot capture fixture: ${id} slot ${slotIndex + 1} attempts must be an array`,
+        );
+      }
+      // Every attempt crosses the same strict numeric allowlist. Invalid
+      // attempts receive no broader access to the raw runtime response.
+      return attempts.map(sanitizedWorkloadResponse);
+    });
   }
   return result;
 }
@@ -187,6 +196,7 @@ export function buildFixtureCapture({
 
   const redactedFields = [];
   const fixture = {
+    schemaVersion: FIXTURE_SCHEMA_VERSION,
     fixtureType: "ollama-runtime-responses",
     realHardware: true,
     label,
@@ -205,7 +215,7 @@ export function buildFixtureCapture({
     showResponse: sanitizedShowResponse(showResponse),
     workloads: sanitizedWorkloads(workloads),
   };
-  return fixture;
+  return validateFixtureFormat(fixture);
 }
 
 export async function writeFixtureCapture(
@@ -231,12 +241,14 @@ function keys(value) {
 export function renderFixtureCaptureSummary({ outputPath, fixture }) {
   const firstWorkloadResponse = Object.values(fixture.workloads)
     .flat()
+    .flat()
     .find(Boolean);
   const finalChunk = firstWorkloadResponse?.chunks?.[0] ?? {};
   return [
     "",
     `Saved real-hardware fixture: ${outputPath}`,
     "Capture metadata:",
+    `- schemaVersion: ${fixture.schemaVersion}`,
     `- fixtureType: ${fixture.fixtureType}`,
     `- realHardware: ${fixture.realHardware}`,
     `- label: ${fixture.label}`,
@@ -251,8 +263,14 @@ export function renderFixtureCaptureSummary({ outputPath, fixture }) {
     `- showResponse.details: ${keys(fixture.showResponse.details)}`,
     `- showResponse.model_info: ${keys(fixture.showResponse.model_info)}`,
     `- workload response: chunks[0] (${keys(finalChunk)}), timeToFirstTokenMs`,
-    `- workload counts: ${Object.entries(fixture.workloads)
-      .map(([id, responses]) => `${id}=${responses.length}`)
+    `- workload slots/attempts: ${Object.entries(fixture.workloads)
+      .map(
+        ([id, slots]) =>
+          `${id}=${slots.length} slots/${slots.reduce(
+            (sum, attempts) => sum + attempts.length,
+            0,
+          )} attempts`,
+      )
       .join(", ")}`,
     "Redacted or omitted:",
     ...fixture.redactions.rulesApplied.map((note) => `- ${note}`),
