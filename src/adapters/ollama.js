@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import {
   FIXED_OPTIONS,
   NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB,
+  PROTOCOL_VERSION,
 } from "../protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -410,7 +411,7 @@ function modelIndependentIssues(system) {
   if (system.gpuCount > 1) {
     issues.push({
       code: "multiple-gpus-unsupported",
-      message: `${system.gpuCount} GPUs detected; osai-bench/1.1 supports one discrete GPU`,
+      message: `${system.gpuCount} GPUs detected; ${PROTOCOL_VERSION} supports one discrete GPU`,
     });
   }
   return issues;

@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import path from "node:path";
 import { OllamaAdapter } from "./adapters/ollama.js";
+import { PROTOCOL_VERSION } from "./protocol.js";
 import { QualityRefusalError, runBenchmark } from "./benchmark.js";
 import { matchGpuMemoryBandwidth } from "./derivation/gpu-bandwidth.js";
 import { renderReport } from "./output/report.js";
@@ -16,7 +17,7 @@ import { writeResult } from "./output/writer.js";
 function usage() {
   return `Usage: osai-bench [options]
 
-Runs the complete osai-bench/1.1 protocol against Ollama on this machine.
+Runs the complete ${PROTOCOL_VERSION} protocol against Ollama on this machine.
 
 Options:
   --model <name>                 Select an installed model non-interactively
@@ -143,7 +144,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   output.write(
-    "OpenSourcesAI Bench — local-only osai-bench/1.1\n" +
+    `OpenSourcesAI Bench — local-only ${PROTOCOL_VERSION}\n` +
       "No telemetry, upload, analytics, version check, or external network access.\n",
   );
   const adapter = new OllamaAdapter();
