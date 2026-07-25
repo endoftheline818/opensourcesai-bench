@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensourcesai.com/schemas/osai-bench-result-v1.2.schema.json",
+  "title": "OpenSourcesAI Bench result protocol 1.2",
+  "type": "object",
+  "required": [
+    "protocolVersion",
+    "clientVersion",
+    "scoringVersion",
+    "createdAt",
+    "qualityOverride",
+    "cohortEligible",
+    "runtime",
+    "model",
+    "system",
+    "configuration",
+    "rawMeasurements",
+    "derived"
+  ],
+  "properties": {
+    "protocolVersion": { "const": "osai-bench/1.2" },
+    "clientVersion": { "type": "string" },
+    "scoringVersion": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "qualityOverride": { "type": "boolean" },
+    "cohortEligible": { "type": "boolean" },
+    "qualityConditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "detected"],
+        "properties": {
+          "code": { "type": "string" },
+          "detected": { "const": true }
+        },
+        "additionalProperties": false
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["name", "version", "endpoint", "layerAssignment", "kvCacheMetadata"],
+      "properties": {
+        "name": { "const": "ollama" },
+        "version": { "type": ["string", "null"] },
+        "endpoint": { "const": "loopback" },
+        "layerAssignment": { "type": ["object", "null"] },
+        "kvCacheMetadata": {
+          "type": "object",
+          "required": [
+            "source",
+            "architecture",
+            "blockCount",
+            "kvHeadCount",
+            "attentionHeadCount",
+            "embeddingLength",
+            "headDimension",
+            "resolvedElementType",
+            "projectedBytes",
+            "calculationAvailable",
+            "missingInputs"
+          ],
+          "properties": {
+            "source": { "const": "ollama.show.model_info" },
+            "architecture": { "type": ["string", "null"] },
+            "blockCount": { "type": ["integer", "null"], "minimum": 1 },
+            "kvHeadCount": { "type": ["integer", "null"], "minimum": 1 },
+            "attentionHeadCount": { "type": ["integer", "null"], "minimum": 1 },
+            "embeddingLength": { "type": ["integer", "null"], "minimum": 1 },
+            "headDimension": { "type": ["integer", "null"], "minimum": 1 },
+            "resolvedElementType": { "type": ["string", "null"] },
+            "projectedBytes": { "type": ["number", "null"], "minimum": 0 },
+            "calculationAvailable": { "const": false },
+            "missingInputs": {
+              "type": "array",
+              "contains": { "const": "resolvedKvCacheElementType" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "identifier",
+        "family",
+        "parameterSize",
+        "quantization",
+        "weightsBytes",
+        "weightsSource"
+      ],
+      "properties": {
+        "identifier": { "type": ["string", "null"] },
+        "digest": { "type": ["string", "null"] },
+        "family": { "type": ["string", "null"] },
+        "parameterSize": { "type": ["string", "null"] },
+        "quantization": { "type": ["string", "null"] },
+        "weightsBytes": { "type": ["number", "null"] },
+        "weightsSource": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "system": {
+      "type": "object",
+      "required": ["cpu", "gpu", "memory", "os", "power"],
+      "properties": {
+        "cpu": { "type": "object" },
+        "gpu": { "type": "object" },
+        "memory": { "type": "object" },
+        "os": { "type": "object" },
+        "power": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "configuration": {
+      "type": "object",
+      "required": [
+        "memoryBandwidthGBps",
+        "memoryBandwidthSource",
+        "memoryBandwidthTableVersion",
+        "memoryBandwidthEntryId",
+        "fixedOptions",
+        "workloads",
+        "resolved"
+      ],
+      "properties": {
+        "memoryBandwidthGBps": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "memoryBandwidthSource": {
+          "type": ["string", "null"],
+          "enum": ["manual", "manufacturer-table", null]
+        },
+        "memoryBandwidthTableVersion": { "type": ["string", "null"] },
+        "memoryBandwidthEntryId": { "type": ["string", "null"] },
+        "fixedOptions": { "type": "object" },
+        "workloads": { "type": "object" },
+        "resolved": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "rawMeasurements": {
+      "type": "object",
+      "required": ["workloads"],
+      "properties": {
+        "workloads": {
+          "type": "object",
+          "required": ["w1", "w2", "w3", "w4"],
+          "properties": {
+            "w1": { "$ref": "#/$defs/workload" },
+            "w2": { "$ref": "#/$defs/workload" },
+            "w3": { "$ref": "#/$defs/workload" },
+            "w4": { "$ref": "#/$defs/workload" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "derived": {
+      "type": "object",
+      "required": [
+        "generationTokensPerSecond",
+        "prefillTokensPerSecond",
+        "timeToFirstTokenMs",
+        "coldLoad",
+        "passFailureRate",
+        "attemptFailureRate",
+        "roofline",
+        "diagnostics"
+      ],
+      "properties": {
+        "passFailureRate": {
+          "type": "object",
+          "required": [
+            "failedMeasuredPasses",
+            "totalMeasuredPasses",
+            "percent"
+          ],
+          "properties": {
+            "failedMeasuredPasses": { "type": "integer", "minimum": 0 },
+            "totalMeasuredPasses": { "type": "integer", "minimum": 0 },
+            "percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": false
+        },
+        "attemptFailureRate": {
+          "type": "object",
+          "required": [
+            "failedAttempts",
+            "totalAttempts",
+            "percent"
+          ],
+          "properties": {
+            "failedAttempts": { "type": "integer", "minimum": 0 },
+            "totalAttempts": { "type": "integer", "minimum": 0 },
+            "percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "workload": {
+      "type": "object",
+      "required": ["warmup", "measuredPasses", "failed"],
+      "properties": {
+        "warmup": { "type": ["object", "null"] },
+        "measuredPasses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "valid",
+              "attempts",
+              "measurement",
+              "validity"
+            ],
+            "properties": {
+              "index": { "type": "integer", "minimum": 1 },
+              "valid": { "type": "boolean" },
+              "attempts": { "type": "array", "minItems": 1, "maxItems": 3 },
+              "measurement": { "type": "object" },
+              "validity": { "type": "object" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "failed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

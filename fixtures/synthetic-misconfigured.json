@@ -1,0 +1,40 @@
+{
+  "fixtureType": "synthetic-misconfigured-ollama-runtime-responses",
+  "realHardware": false,
+  "warning": "Synthetic negative-control placeholder. It does not satisfy the §11 real-hardware release gate.",
+  "condition": "partial CPU offload, oversized context, and weights larger than VRAM",
+  "runtimeInspection": {
+    "layer_assignment": {
+      "total_layers": 33,
+      "gpu_layers": 26,
+      "cpu_layers": 7
+    },
+    "context_memory_required_bytes": 12884901888
+  },
+  "system": {
+    "gpu": {
+      "present": true,
+      "model": "Synthetic GPU",
+      "totalVramBytes": 8589934592,
+      "freeVramBytesAtLoad": 2147483648
+    }
+  },
+  "model": {
+    "weightsBytes": 10000000000
+  },
+  "sustainedGenerationResponse": {
+    "chunks": [
+      {
+        "done": true,
+        "response": "synthetic",
+        "total_duration": 26000000000,
+        "load_duration": 1000000,
+        "prompt_eval_count": 32,
+        "prompt_eval_duration": 1000000000,
+        "eval_count": 512,
+        "eval_duration": 25000000000
+      }
+    ],
+    "timeToFirstTokenMs": 1100
+  }
+}

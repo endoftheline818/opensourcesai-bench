@@ -1,0 +1,4 @@
+node_modules/
+coverage/
+osai-bench-result-*.json
+*.tgz
