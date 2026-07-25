@@ -42,6 +42,10 @@ test("result schema accepts only protocol 1.1 records", async () => {
 
 test("bandwidth table is release-blocked and every value has a manufacturer source", () => {
   assert.equal(
+    GPU_MEMORY_BANDWIDTH_TABLE.schemaVersion,
+    "osai-gpu-memory-bandwidth/2",
+  );
+  assert.equal(
     GPU_MEMORY_BANDWIDTH_TABLE.releaseStatus,
     "requires-human-verification",
   );
@@ -51,9 +55,15 @@ test("bandwidth table is release-blocked and every value has a manufacturer sour
     assert.ok(entry.memoryBandwidthGBps > 0);
     assert.ok(entry.match.detectionNames.length > 0);
     assert.ok(entry.source.manufacturer);
+    assert.ok([1, 2, 3].includes(entry.sourceTier));
     assert.match(entry.source.url, /^https:\/\/(?:www\.nvidia\.com|images\.nvidia\.com)\//);
     assert.ok(entry.source.title);
     assert.ok(entry.source.locator);
+    assert.match(
+      entry.source.archiveUrl,
+      /^https:\/\/web\.archive\.org\/web\/\d{14}\//,
+    );
+    assert.match(entry.source.archiveDate, /^\d{4}-\d{2}-\d{2}$/);
   }
 });
 
@@ -65,7 +75,7 @@ test("workflow has no stored npm credential reference", async () => {
   assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN|npm-token/i);
 });
 
-test("fixtures are explicitly labelled synthetic pending real hardware", async () => {
+test("synthetic fixtures stay labelled and future real captures meet the fixture contract", async () => {
   const names = await readdir(path.join(root, "fixtures"));
   assert.ok(names.includes("synthetic-normal.json"));
   assert.ok(names.includes("synthetic-misconfigured.json"));
@@ -73,8 +83,27 @@ test("fixtures are explicitly labelled synthetic pending real hardware", async (
     const fixture = JSON.parse(
       await readFile(path.join(root, "fixtures", name), "utf8"),
     );
-    assert.equal(fixture.realHardware, false);
-    assert.match(fixture.fixtureType, /synthetic/);
+    if (fixture.realHardware === false) {
+      assert.match(fixture.fixtureType, /synthetic/);
+      assert.equal(typeof fixture.warning, "string");
+      continue;
+    }
+    assert.equal(fixture.realHardware, true);
+    assert.equal(fixture.fixtureType, "ollama-runtime-responses");
+    assert.equal("warning" in fixture, false);
+    assert.equal(typeof fixture.label, "string");
+    assert.equal(Number.isFinite(Date.parse(fixture.capturedAt)), true);
+    assert.match(fixture.clientVersion, /^\d+\.\d+\.\d+$/);
+    assert.equal(fixture.protocolVersion, "osai-bench/1.1");
+    assert.ok(Array.isArray(fixture.redactions.rulesApplied));
+    assert.ok(Array.isArray(fixture.redactions.pathValuesRedacted));
+    assert.deepEqual(Object.keys(fixture.workloads).sort(), [
+      "w1",
+      "w2",
+      "w3",
+      "w4",
+    ]);
+    assert.equal(fixture.tagsResponse.models.length, 1);
   }
 });
 

@@ -7,6 +7,10 @@ import { OllamaAdapter } from "./adapters/ollama.js";
 import { QualityRefusalError, runBenchmark } from "./benchmark.js";
 import { matchGpuMemoryBandwidth } from "./derivation/gpu-bandwidth.js";
 import { renderReport } from "./output/report.js";
+import {
+  renderFixtureCaptureSummary,
+  writeFixtureCapture,
+} from "./output/fixture-writer.js";
 import { writeResult } from "./output/writer.js";
 
 function usage() {
@@ -19,7 +23,13 @@ Options:
   --memory-bandwidth <GB/s>      Override auto-detected GPU memory bandwidth
   --quality-override             Run despite detected quality preconditions
   --output <path>                Result JSON path (must not already exist)
+  --capture-fixture <path>       Also save a real-hardware fixture (no overwrite)
+  --fixture-label <text>         Required label for --capture-fixture
   --help                         Show this help
+
+Example fixture capture:
+  osai-bench --model qwen3:8b --capture-fixture fixtures/rtx-4070-ti.json \\
+    --fixture-label "rtx-4070-ti-partial-offload"
 
 The CLI makes no external network calls. Its only HTTP connection is to
 Ollama at http://127.0.0.1:11434.`;
@@ -31,12 +41,16 @@ function parseArguments(argv) {
     memoryBandwidthGBps: null,
     qualityOverride: false,
     outputPath: null,
+    captureFixturePath: null,
+    fixtureLabel: null,
     help: false,
   };
   const valueOptions = new Map([
     ["--model", "model"],
     ["--memory-bandwidth", "memoryBandwidthGBps"],
     ["--output", "outputPath"],
+    ["--capture-fixture", "captureFixturePath"],
+    ["--fixture-label", "fixtureLabel"],
   ]);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -69,6 +83,19 @@ function parseArguments(argv) {
     ) {
       throw new Error("--memory-bandwidth must be a positive number");
     }
+  }
+  if (result.captureFixturePath !== null && result.fixtureLabel === null) {
+    throw new Error("--capture-fixture requires --fixture-label");
+  }
+  if (result.fixtureLabel !== null && result.captureFixturePath === null) {
+    throw new Error("--fixture-label requires --capture-fixture");
+  }
+  if (
+    result.outputPath !== null &&
+    result.captureFixturePath !== null &&
+    path.resolve(result.outputPath) === path.resolve(result.captureFixturePath)
+  ) {
+    throw new Error("--output and --capture-fixture must use different paths");
   }
   return result;
 }
@@ -164,16 +191,30 @@ export async function main(argv = process.argv.slice(2)) {
         memoryBandwidthGBps = await askBandwidth(readline);
       }
     }
+    let fixtureCapture = null;
     const record = await runBenchmark({
       adapter,
       model,
       memoryBandwidthGBps,
       qualityOverride: args.qualityOverride,
       onProgress: (message) => output.write(`  ${message}\n`),
+      onFixtureCapture: args.captureFixturePath
+        ? (capture) => {
+            fixtureCapture = capture;
+          }
+        : undefined,
     });
     output.write(`${renderReport(record)}\n`);
     const resultPath = await writeResult(record, args.outputPath);
     output.write(`\nSaved machine-readable result: ${resultPath}\n`);
+    if (args.captureFixturePath) {
+      const captured = await writeFixtureCapture(fixtureCapture, {
+        requestedPath: args.captureFixturePath,
+        label: args.fixtureLabel,
+        capturedAt: record.createdAt,
+      });
+      output.write(`${renderFixtureCaptureSummary(captured)}\n`);
+    }
     return 0;
   } catch (error) {
     if (error instanceof QualityRefusalError) {

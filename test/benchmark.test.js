@@ -167,9 +167,35 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.derived.passFailureRate.percent, 0);
   assert.equal(record.derived.attemptFailureRate.percent, 0);
   assert.equal(record.protocolVersion, "osai-bench/1.1");
-  assert.equal(record.clientVersion, "0.2.0");
+  assert.equal(record.clientVersion, "0.3.0");
   assert.equal(record.scoringVersion, "osai-bench-derive/1.2");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
+});
+
+test("fixture capture side channel retains the existing workload response shape", async () => {
+  const adapter = new FakeAdapter({ retryW2: true });
+  let captured = null;
+  const record = await runBenchmark({
+    adapter,
+    model: "fixture:8b",
+    onFixtureCapture: (value) => {
+      captured = value;
+    },
+  });
+  assert.equal(record.rawMeasurements.workloads.w2.measuredPasses[0].attempts.length, 2);
+  assert.equal(captured.model, "fixture:8b");
+  assert.equal(captured.tagsResponse.models.length, 1);
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(captured.workloads).map(([id, responses]) => [
+        id,
+        responses.length,
+      ]),
+    ),
+    { w1: 1, w2: 6, w3: 6, w4: 6 },
+  );
+  assert.equal(captured.workloads.w2[1].chunks[0].eval_count, 128);
+  assert.equal(captured.workloads.w2[1].chunks[0].response, "not persisted");
 });
 
 test("invalid measured pass retries and retains every attempt", async () => {

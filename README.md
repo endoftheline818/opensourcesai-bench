@@ -1,6 +1,6 @@
 # @opensourcesai/bench
 
-A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.2.0`
+A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.3.0`
 implements the draft `osai-bench/1.1` measurement protocol. Records produced
 under `osai-bench/1` and `osai-bench/1.1` must never be pooled.
 
@@ -59,6 +59,49 @@ Use `--quality-override` only for a deliberately non-standard run. The result
 is permanently marked `"qualityOverride": true` and
 `"cohortEligible": false`.
 
+### Capture a real fixture
+
+Fixture capture is opt-in and writes a second file alongside the normal result:
+
+```sh
+npx @opensourcesai/bench \
+  --model qwen3:8b \
+  --capture-fixture fixtures/rtx-4070-ti-partial-offload.json \
+  --fixture-label "rtx-4070-ti-partial-offload"
+```
+
+`--capture-fixture <path>` and `--fixture-label <text>` must be supplied
+together. The destination is created exclusively and never overwritten. A
+captured file has the same `tagsResponse`, `showResponse`, and `workloads`
+shape as the committed derivation fixtures, so it can be loaded without
+editing. It is marked `"realHardware": true`, has no synthetic warning, and
+records its free-text label, UTC capture time, client version, and protocol
+version.
+
+Capture mode adds no network path. It uses responses already collected from
+the guarded local Ollama endpoint. A normal run without `--capture-fixture`
+does not build or write fixture data.
+
+The fixture is deliberately narrower than the normal result:
+
+- `tagsResponse` contains only the selected model's identifier, digest, byte
+  size, family, parameter size, and quantization;
+- `showResponse` contains only family/parameter/quantization details, the
+  architecture fields needed by current derivation, and an explicit numeric
+  layer assignment when Ollama provides one;
+- `workloads` contains one final measurement chunk per scheduled slot, plus
+  the W2/W3/W4 warmups and client-observed TTFT; and
+- capture metadata and redaction notes occupy the remaining top-level fields.
+
+It never writes the other installed models, prompts or request bodies, model
+output, intermediate streamed chunks, Modelfile, prompt template, license,
+runtime parameter text, system identity, environment, or file paths. A
+path-like model identifier is replaced with `[REDACTED_LOCAL_PATH]` and the
+field is listed in `redactions.pathValuesRedacted`. After writing, the CLI
+prints the exact field groups and response counts captured, the absolute
+destination, and every applied omission/redaction rule for review before
+commit.
+
 ## Exactly what is measured
 
 The workloads always run in this order:
@@ -110,18 +153,25 @@ distinguish variants, detected VRAM. `--memory-bandwidth <GB/s>` is always a
 manual override.
 
 **The entire bundled table requires human verification before release.** Every
-row carries its manufacturer, source document URL, and exact locator. Values
-must never be added from memory, secondary databases, retailer listings, or
-calculation from plausible specifications. If no uniquely sourced entry
-matches, roofline utilization is unavailable and throughput is still reported.
-The CLI makes no network request to resolve or verify the table.
+row carries its manufacturer, source tier, source document URL, exact locator,
+dated Wayback Machine snapshot URL, and snapshot date. Values must never be
+added from memory, secondary databases, retailer listings, or calculation from
+plausible specifications.
+
+New entries follow this source hierarchy: (1) architecture whitepaper,
+(2) product specification page, (3) official NVIDIA technical article or
+newsroom post stating the figure verbatim, or (4) omit the entry. Tier 3 is
+weaker than tiers 1–2 and requires an archive snapshot; the table requires a
+snapshot for every tier. If no uniquely sourced entry matches, roofline
+utilization is unavailable and throughput is still reported. The CLI makes no
+network request to resolve or verify the table or its archive URLs.
 
 The initial sourced entries are:
 
-| Detection target | Bandwidth | Manufacturer source |
-|---|---:|---|
-| NVIDIA GeForce RTX 3080, 10 GB | 760 GB/s | NVIDIA, *NVIDIA Ampere GA102 GPU Architecture*, Table 2 |
-| NVIDIA GeForce RTX 4070 Ti, 12 GB | 504 GB/s | NVIDIA, *New GeForce RTX 50 Series Graphics Cards & Laptops Powered By NVIDIA Blackwell Bring Game-Changing AI and Neural Rendering Capabilities To Gamers and Creators*, “GeForce RTX 5070 Ti: 2X Faster Than The GeForce RTX 4070 Ti,” first paragraph |
+| Detection target | Bandwidth | Tier | Manufacturer source |
+|---|---:|---:|---|
+| NVIDIA GeForce RTX 3080, 10 GB | 760 GB/s | 1 | NVIDIA, *NVIDIA Ampere GA102 GPU Architecture*, Table 2; [2023-06-20 snapshot](https://web.archive.org/web/20230620221827/https://www.nvidia.com/content/PDF/nvidia-ampere-ga-102-gpu-architecture-whitepaper-v2.1.pdf) |
+| NVIDIA GeForce RTX 4070 Ti, 12 GB | 504 GB/s | 3 | NVIDIA, *New GeForce RTX 50 Series Graphics Cards & Laptops Powered By NVIDIA Blackwell Bring Game-Changing AI and Neural Rendering Capabilities To Gamers and Creators*, “GeForce RTX 5070 Ti: 2X Faster Than The GeForce RTX 4070 Ti,” first paragraph; [2025-01-15 snapshot](https://web.archive.org/web/20250115035359/https://www.nvidia.com/en-us/geforce/news/rtx-50-series-graphics-cards-gpu-laptop-announcements/) |
 
 ## Exactly what is written to disk
 
@@ -167,8 +217,8 @@ npm test
 ```
 
 Tests cover every derivation, validity rule, retry rule, diagnostic, CLI
-argument rule, JSON privacy boundary, and loopback restriction without a GPU
-or Ollama.
+argument rule, result and fixture privacy boundaries, exclusive writers,
+captured-fixture round trip, and loopback restriction without a GPU or Ollama.
 
 The committed fixtures are explicitly synthetic, including the fixture that
 pins a failed attempt followed by a successful retry. Real recorded Ollama

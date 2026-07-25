@@ -6,8 +6,11 @@ import { extractRawMeasurement } from "../src/derivation/ollama.js";
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 export async function loadFixture(name) {
+  const fixturePath = path.isAbsolute(name)
+    ? name
+    : path.join(testDirectory, "..", "fixtures", name);
   return JSON.parse(
-    await readFile(path.join(testDirectory, "..", "fixtures", name), "utf8"),
+    await readFile(fixturePath, "utf8"),
   );
 }
 
@@ -40,7 +43,7 @@ export async function normalRecord() {
   }
   return {
     protocolVersion: "osai-bench/1.1",
-    clientVersion: "0.2.0",
+    clientVersion: "0.3.0",
     scoringVersion: "osai-bench-derive/1.2",
     createdAt: "2026-07-25T00:00:00.000Z",
     qualityOverride: false,

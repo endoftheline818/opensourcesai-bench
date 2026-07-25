@@ -17,6 +17,27 @@ function matchesVram(entry, totalVramBytes) {
   return Math.abs(detectedMiB - nominalMiB) <= toleranceMiB;
 }
 
+function hasDurableManufacturerSource(entry) {
+  const source = entry?.source;
+  return (
+    Number.isInteger(entry?.sourceTier) &&
+    entry.sourceTier >= 1 &&
+    entry.sourceTier <= 3 &&
+    typeof source?.manufacturer === "string" &&
+    source.manufacturer.length > 0 &&
+    typeof source?.title === "string" &&
+    source.title.length > 0 &&
+    typeof source?.url === "string" &&
+    source.url.startsWith("https://") &&
+    typeof source?.locator === "string" &&
+    source.locator.length > 0 &&
+    typeof source?.archiveUrl === "string" &&
+    /^https:\/\/web\.archive\.org\/web\/\d{14}\//.test(source.archiveUrl) &&
+    typeof source?.archiveDate === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(source.archiveDate)
+  );
+}
+
 export function matchGpuMemoryBandwidth(
   { model, totalVramBytes },
   table = GPU_MEMORY_BANDWIDTH_TABLE,
@@ -27,6 +48,7 @@ export function matchGpuMemoryBandwidth(
   const matches = table.entries.filter((entry) => {
     const names = entry.match?.detectionNames ?? [];
     return (
+      hasDurableManufacturerSource(entry) &&
       names.some((name) => normalizeDetectionName(name) === detectedName) &&
       matchesVram(entry, totalVramBytes)
     );
@@ -68,3 +90,5 @@ export function resolveGpuMemoryBandwidth(
 }
 
 export { GPU_MEMORY_BANDWIDTH_TABLE };
+
+export const __test = { hasDurableManufacturerSource };

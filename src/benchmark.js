@@ -60,11 +60,18 @@ async function collectAttempt(adapter, workload) {
   const raw = await adapter.generate(workload.model, workload);
   const measurement = extractRawMeasurement(raw);
   const validity = validatePass(measurement, workload);
-  return { measurement, validity };
+  return { raw, measurement, validity };
 }
 
-async function measuredPass(adapter, workload, passIndex, onProgress) {
+async function measuredPass(
+  adapter,
+  workload,
+  passIndex,
+  onProgress,
+  captureResponses,
+) {
   const attempts = [];
+  let finalRaw = null;
   for (let retry = 0; retry <= MAX_RETRIES; retry += 1) {
     progress(
       onProgress,
@@ -72,8 +79,13 @@ async function measuredPass(adapter, workload, passIndex, onProgress) {
         (retry > 0 ? `, retry ${retry}/${MAX_RETRIES}` : ""),
     );
     const attempt = await collectAttempt(adapter, workload);
-    attempts.push(attempt);
+    finalRaw = attempt.raw;
+    attempts.push({
+      measurement: attempt.measurement,
+      validity: attempt.validity,
+    });
     if (attempt.validity.valid) {
+      captureResponses?.push(attempt.raw);
       return {
         index: passIndex,
         valid: true,
@@ -84,6 +96,9 @@ async function measuredPass(adapter, workload, passIndex, onProgress) {
     }
   }
   const finalAttempt = attempts.at(-1);
+  // The final raw response is retained only in the opt-in capture side
+  // channel. It never enters the normal result record.
+  captureResponses?.push(finalRaw);
   return {
     index: passIndex,
     valid: false,
@@ -93,15 +108,28 @@ async function measuredPass(adapter, workload, passIndex, onProgress) {
   };
 }
 
-async function runRepeatedWorkload(adapter, definition, model, onProgress) {
+async function runRepeatedWorkload(
+  adapter,
+  definition,
+  model,
+  onProgress,
+  captureResponses,
+) {
   const workload = { ...definition, model };
   progress(onProgress, `${workload.name}: warmup (discarded)`);
   const warmupRaw = await adapter.generate(model, workload);
+  captureResponses?.push(warmupRaw);
   const warmup = extractRawMeasurement(warmupRaw);
   const measuredPasses = [];
   for (let index = 1; index <= workload.repetitions; index += 1) {
     measuredPasses.push(
-      await measuredPass(adapter, workload, index, onProgress),
+      await measuredPass(
+        adapter,
+        workload,
+        index,
+        onProgress,
+        captureResponses,
+      ),
     );
   }
   return {
@@ -111,9 +139,16 @@ async function runRepeatedWorkload(adapter, definition, model, onProgress) {
   };
 }
 
-async function runColdLoad(adapter, definition, model, onProgress) {
+async function runColdLoad(
+  adapter,
+  definition,
+  model,
+  onProgress,
+  captureResponses,
+) {
   const workload = { ...definition, model };
   const attempts = [];
+  let finalRaw = null;
   for (let retry = 0; retry <= MAX_RETRIES; retry += 1) {
     progress(onProgress, "Cold load: force-unloading target model");
     await adapter.forceUnload(model);
@@ -123,9 +158,14 @@ async function runColdLoad(adapter, definition, model, onProgress) {
         (retry > 0 ? `, retry ${retry}/${MAX_RETRIES}` : ""),
     );
     const attempt = await collectAttempt(adapter, workload);
-    attempts.push(attempt);
+    finalRaw = attempt.raw;
+    attempts.push({
+      measurement: attempt.measurement,
+      validity: attempt.validity,
+    });
     if (attempt.validity.valid) break;
   }
+  captureResponses?.push(finalRaw);
   const finalAttempt = attempts.at(-1);
   const pass = {
     index: 1,
@@ -143,6 +183,7 @@ export async function runBenchmark({
   memoryBandwidthGBps = null,
   qualityOverride = false,
   onProgress,
+  onFixtureCapture,
 }) {
   progress(onProgress, "Checking run-quality preconditions");
   const preconditions = await adapter.checkPreconditions(model);
@@ -169,11 +210,16 @@ export async function runBenchmark({
   ]);
 
   const rawMeasurements = { workloads: {} };
+  const captureWorkloads =
+    typeof onFixtureCapture === "function"
+      ? { w1: [], w2: [], w3: [], w4: [] }
+      : null;
   rawMeasurements.workloads.w1 = await runColdLoad(
     adapter,
     WORKLOADS.w1,
     model,
     onProgress,
+    captureWorkloads?.w1,
   );
   const atLoad = await adapter.collectSystemSnapshot();
 
@@ -183,6 +229,7 @@ export async function runBenchmark({
       WORKLOADS[id],
       model,
       onProgress,
+      captureWorkloads?.[id],
     );
   }
 
@@ -236,5 +283,13 @@ export async function runBenchmark({
     derived: null,
   };
   record.derived = deriveMetrics(record);
+  if (captureWorkloads) {
+    await onFixtureCapture({
+      model,
+      tagsResponse: tagsRaw,
+      showResponse: showRaw,
+      workloads: captureWorkloads,
+    });
+  }
   return record;
 }
