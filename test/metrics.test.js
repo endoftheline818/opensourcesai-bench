@@ -29,7 +29,7 @@ test("headline metrics are medians and CVs across five measured passes", async (
   assert.equal(derived.generationTokensPerSecond.samples, 5);
   assert.equal(derived.generationTokensPerSecond.median, 512 / 7.8);
   assert.ok(derived.generationTokensPerSecond.coefficientOfVariation > 0);
-  assert.equal(derived.prefillTokensPerSecond.median, 4096 / 1.98);
+  assert.equal(derived.prefillTokensPerSecond.median, 3100 / 1.98);
   assert.equal(derived.timeToFirstTokenMs.median, 220);
   assert.equal(derived.coldLoad.seconds, 3);
   assert.deepEqual(derived.passFailureRate, {

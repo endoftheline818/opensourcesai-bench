@@ -124,7 +124,11 @@ class FakeAdapter {
       evalCount -= 1;
     }
     const promptCount =
-      workload.intendedPromptTokens ?? (workload.id === "w1" ? 5 : 32);
+      workload.promptTokenRange
+        ? Math.floor(
+            (workload.promptTokenRange.min + workload.promptTokenRange.max) / 2,
+          )
+        : 5;
     const evalDuration =
       workload.id === "w4" ? 8_000_000_000 : 1_000_000_000;
     return {
@@ -167,9 +171,9 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.rawMeasurements.workloads.w2.warmup.eval_count, 128);
   assert.equal(record.derived.passFailureRate.percent, 0);
   assert.equal(record.derived.attemptFailureRate.percent, 0);
-  assert.equal(record.protocolVersion, "osai-bench/1.1");
-  assert.equal(record.clientVersion, "0.4.0");
-  assert.equal(record.scoringVersion, "osai-bench-derive/1.2");
+  assert.equal(record.protocolVersion, "osai-bench/1.2");
+  assert.equal(record.clientVersion, "0.5.0");
+  assert.equal(record.scoringVersion, "osai-bench-derive/1.3");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });
 
@@ -207,8 +211,8 @@ test("fixture capture side channel preserves ordered attempts per scheduled slot
 test("duration estimate follows the configured schedule and identifies W3", () => {
   assert.deepEqual(estimateRunDuration(), {
     scheduledPasses: 19,
-    configuredTokens: 28_807,
-    estimatedMinutes: { minimum: 2, maximum: 10 },
+    configuredTokens: 22_636,
+    estimatedMinutes: { minimum: 2, maximum: 8 },
     dominantWorkload: "w3",
   });
 });

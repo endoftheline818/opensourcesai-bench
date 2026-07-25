@@ -164,7 +164,7 @@
               "done": true,
               "total_duration": 2200000000,
               "load_duration": 1000000,
-              "prompt_eval_count": 4096,
+              "prompt_eval_count": 3100,
               "prompt_eval_duration": 2000000000,
               "eval_count": 1,
               "eval_duration": 100000000
@@ -180,7 +180,7 @@
               "done": true,
               "total_duration": 2150000000,
               "load_duration": 1000000,
-              "prompt_eval_count": 4096,
+              "prompt_eval_count": 3100,
               "prompt_eval_duration": 1950000000,
               "eval_count": 1,
               "eval_duration": 100000000
@@ -196,7 +196,7 @@
               "done": true,
               "total_duration": 2250000000,
               "load_duration": 1000000,
-              "prompt_eval_count": 4096,
+              "prompt_eval_count": 3100,
               "prompt_eval_duration": 2050000000,
               "eval_count": 1,
               "eval_duration": 100000000
@@ -212,7 +212,7 @@
               "done": true,
               "total_duration": 2180000000,
               "load_duration": 1000000,
-              "prompt_eval_count": 4096,
+              "prompt_eval_count": 3100,
               "prompt_eval_duration": 1980000000,
               "eval_count": 1,
               "eval_duration": 100000000
@@ -228,7 +228,7 @@
               "done": true,
               "total_duration": 2170000000,
               "load_duration": 1000000,
-              "prompt_eval_count": 4096,
+              "prompt_eval_count": 3100,
               "prompt_eval_duration": 1970000000,
               "eval_count": 1,
               "eval_duration": 100000000
@@ -244,7 +244,7 @@
               "done": true,
               "total_duration": 2200000000,
               "load_duration": 1000000,
-              "prompt_eval_count": 4096,
+              "prompt_eval_count": 3100,
               "prompt_eval_duration": 2000000000,
               "eval_count": 1,
               "eval_duration": 100000000

@@ -47,8 +47,13 @@ export function estimateRunDuration(workloads = WORKLOADS) {
   const workloadTokens = {};
   for (const [id, workload] of Object.entries(workloads)) {
     const requests = workload.warmups + workload.repetitions;
-    const tokensPerRequest =
-      (workload.intendedPromptTokens ?? 0) + workload.numPredict;
+    // Planning figure only: the midpoint of the workload's accepted token band.
+    // Never a validity input and never recorded — it exists solely to turn the
+    // configured schedule into a wall-clock range.
+    const bandMidpoint = workload.promptTokenRange
+      ? (workload.promptTokenRange.min + workload.promptTokenRange.max) / 2
+      : 0;
+    const tokensPerRequest = bandMidpoint + workload.numPredict;
     const tokens = requests * tokensPerRequest;
     scheduledPasses += requests;
     configuredTokens += tokens;
@@ -340,7 +345,7 @@ export async function runBenchmark({
             numPredict: workload.numPredict,
             numCtx: workload.numCtx,
             keepAlive: workload.keepAlive,
-            intendedPromptTokens: workload.intendedPromptTokens,
+            promptTokenRange: workload.promptTokenRange,
             warmups: workload.warmups,
             repetitions: workload.repetitions,
           },

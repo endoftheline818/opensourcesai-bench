@@ -104,7 +104,7 @@ function captureSource(model = "fixture-model:8b-q4") {
       ],
       w3: Array.from({ length: 6 }, (_, index) => [
         workloadResponse(index + 8, {
-          promptEvalCount: 4096,
+          promptEvalCount: 3100,
           evalCount: 1,
         }),
       ]),
@@ -134,8 +134,8 @@ test("captured fixture round-trips through the fixture loader without editing", 
   assert.equal(fixture.label, "rtx-4070-ti-partial-offload");
   assert.equal(fixture.capturedAt, "2026-07-25T12:00:00.000Z");
   assert.equal(fixture.schemaVersion, FIXTURE_SCHEMA_VERSION);
-  assert.equal(fixture.clientVersion, "0.4.0");
-  assert.equal(fixture.protocolVersion, "osai-bench/1.1");
+  assert.equal(fixture.clientVersion, "0.5.0");
+  assert.equal(fixture.protocolVersion, "osai-bench/1.2");
   assert.deepEqual(
     Object.fromEntries(
       Object.entries(fixture.workloads).map(([id, slots]) => [
@@ -246,8 +246,8 @@ test("terminal summary names captured fields, counts, redactions, and path", () 
   assert.match(summary, /Saved real-hardware fixture: \/tmp\/summary-check\.json/);
   assert.match(summary, /label: summary-check/);
   assert.match(summary, /schemaVersion: osai-bench-fixture\/2/);
-  assert.match(summary, /clientVersion: 0\.4\.0/);
-  assert.match(summary, /protocolVersion: osai-bench\/1\.1/);
+  assert.match(summary, /clientVersion: 0\.5\.0/);
+  assert.match(summary, /protocolVersion: osai-bench\/1\.2/);
   assert.match(summary, /tagsResponse\.models\[0\]/);
   assert.match(summary, /showResponse\.model_info/);
   assert.match(summary, /w1=1 slots\/1 attempts/);

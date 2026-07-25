@@ -55,9 +55,9 @@ export async function normalRecord(
     };
   }
   return {
-    protocolVersion: "osai-bench/1.1",
-    clientVersion: "0.4.0",
-    scoringVersion: "osai-bench-derive/1.2",
+    protocolVersion: "osai-bench/1.2",
+    clientVersion: "0.5.0",
+    scoringVersion: "osai-bench-derive/1.3",
     createdAt: "2026-07-25T00:00:00.000Z",
     qualityOverride: false,
     cohortEligible: true,

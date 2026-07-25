@@ -27,7 +27,7 @@ test("result schema accepts only protocol 1.1 records", async () => {
   const schema = JSON.parse(
     await readFile(path.join(root, "schema", "result-v1.schema.json"), "utf8"),
   );
-  assert.equal(schema.properties.protocolVersion.const, "osai-bench/1.1");
+  assert.equal(schema.properties.protocolVersion.const, "osai-bench/1.2");
   assert.deepEqual(
     schema.properties.derived.properties.passFailureRate.required,
     ["failedMeasuredPasses", "totalMeasuredPasses", "percent"],
@@ -101,7 +101,7 @@ test("synthetic fixtures stay labelled and future real captures meet the fixture
     assert.equal(typeof fixture.label, "string");
     assert.equal(Number.isFinite(Date.parse(fixture.capturedAt)), true);
     assert.match(fixture.clientVersion, /^\d+\.\d+\.\d+$/);
-    assert.equal(fixture.protocolVersion, "osai-bench/1.1");
+    assert.equal(fixture.protocolVersion, "osai-bench/1.2");
     assert.ok(Array.isArray(fixture.redactions.rulesApplied));
     assert.ok(Array.isArray(fixture.redactions.pathValuesRedacted));
     assert.deepEqual(Object.keys(fixture.workloads).sort(), [
