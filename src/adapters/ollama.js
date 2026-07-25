@@ -501,7 +501,7 @@ export class OllamaAdapter {
     if (system.gpuCount > 1) {
       issues.push({
         code: "multiple-gpus-unsupported",
-        message: `${system.gpuCount} GPUs detected; osai-bench/1 supports one discrete GPU`,
+        message: `${system.gpuCount} GPUs detected; osai-bench/1.1 supports one discrete GPU`,
       });
     }
 

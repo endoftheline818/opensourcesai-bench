@@ -4,6 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CLIENT_VERSION } from "../src/version.js";
+import { GPU_MEMORY_BANDWIDTH_TABLE } from "../data/gpu-memory-bandwidth-v1.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -16,8 +17,40 @@ test("package is public-scoped, executable, dependency-free, and version-aligned
   assert.equal(packageJson.bin["osai-bench"], "src/cli.js");
   assert.equal(packageJson.engines.node, ">=20");
   assert.equal(packageJson.version, CLIENT_VERSION);
+  assert.ok(packageJson.files.includes("data"));
   assert.equal(packageJson.dependencies, undefined);
   assert.equal(packageJson.devDependencies, undefined);
+});
+
+test("result schema accepts only protocol 1.1 records", async () => {
+  const schema = JSON.parse(
+    await readFile(path.join(root, "schema", "result-v1.schema.json"), "utf8"),
+  );
+  assert.equal(schema.properties.protocolVersion.const, "osai-bench/1.1");
+  assert.deepEqual(
+    schema.properties.derived.properties.failureRate.required,
+    ["failedMeasuredPasses", "totalMeasuredPasses", "percent"],
+  );
+  assert.ok(
+    schema.properties.runtime.required.includes("kvCacheMetadata"),
+  );
+});
+
+test("bandwidth table is release-blocked and every value has a manufacturer source", () => {
+  assert.equal(
+    GPU_MEMORY_BANDWIDTH_TABLE.releaseStatus,
+    "requires-human-verification",
+  );
+  assert.ok(GPU_MEMORY_BANDWIDTH_TABLE.entries.length > 0);
+  for (const entry of GPU_MEMORY_BANDWIDTH_TABLE.entries) {
+    assert.ok(entry.id);
+    assert.ok(entry.memoryBandwidthGBps > 0);
+    assert.ok(entry.match.detectionNames.length > 0);
+    assert.ok(entry.source.manufacturer);
+    assert.match(entry.source.url, /^https:\/\/(?:www\.nvidia\.com|images\.nvidia\.com)\//);
+    assert.ok(entry.source.title);
+    assert.ok(entry.source.locator);
+  }
 });
 
 test("workflow has no stored npm credential reference", async () => {

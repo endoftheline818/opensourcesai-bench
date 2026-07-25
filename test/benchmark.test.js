@@ -26,9 +26,16 @@ function systemSnapshot() {
 }
 
 class FakeAdapter {
-  constructor({ issues = [], retryW2 = false, failW4 = false, failW1 = false } = {}) {
+  constructor({
+    issues = [],
+    retryW2 = false,
+    retryW1 = false,
+    failW4 = false,
+    failW1 = false,
+  } = {}) {
     this.issues = issues;
     this.retryW2 = retryW2;
+    this.retryW1 = retryW1;
     this.failW4 = failW4;
     this.failW1 = failW1;
     this.calls = { w1: 0, w2: 0, w3: 0, w4: 0, forceUnload: 0 };
@@ -71,6 +78,13 @@ class FakeAdapter {
         total_layers: 33,
         gpu_layers: 26,
         cpu_layers: 7,
+      },
+      model_info: {
+        "general.architecture": "fixture",
+        "fixture.block_count": 32,
+        "fixture.attention.head_count": 32,
+        "fixture.attention.head_count_kv": 8,
+        "fixture.embedding_length": 4096,
       },
     };
   }
@@ -118,7 +132,11 @@ class FakeAdapter {
           response: "not persisted",
           done: true,
           total_duration: 10_000_000_000,
-          load_duration: this.failW1 && workload.id === "w1" ? 0 : 1_000_000_000,
+          load_duration:
+            workload.id === "w1" &&
+            (this.failW1 || (this.retryW1 && this.calls.w1 === 1))
+              ? 0
+              : 1_000_000_000,
           prompt_eval_count: promptCount,
           prompt_eval_duration: 1_000_000_000,
           eval_count: evalCount,
@@ -147,9 +165,9 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.rawMeasurements.workloads.w2.measuredPasses.length, 5);
   assert.equal(record.rawMeasurements.workloads.w2.warmup.eval_count, 128);
   assert.equal(record.derived.failureRate.percent, 0);
-  assert.equal(record.protocolVersion, "osai-bench/1");
-  assert.equal(record.clientVersion, "0.1.0");
-  assert.equal(record.scoringVersion, "osai-bench-derive/1");
+  assert.equal(record.protocolVersion, "osai-bench/1.1");
+  assert.equal(record.clientVersion, "0.2.0");
+  assert.equal(record.scoringVersion, "osai-bench-derive/1.1");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });
 
@@ -164,6 +182,23 @@ test("invalid measured pass retries and retains every attempt", async () => {
   assert.equal(first.attempts[1].validity.valid, true);
 });
 
+test("collector GPU identity resolves bundled bandwidth when no manual override is supplied", async () => {
+  const adapter = new FakeAdapter();
+  adapter.checkPreconditions = async () => {
+    const system = systemSnapshot();
+    system.gpu.model = "NVIDIA GeForce RTX 4070 Ti";
+    system.gpu.totalVramBytes = 12288 * 1024 ** 2;
+    return { issues: [], system, rawRunningModels: { models: [] } };
+  };
+  const record = await runBenchmark({ adapter, model: "fixture:8b" });
+  assert.equal(record.configuration.memoryBandwidthGBps, 504);
+  assert.equal(record.configuration.memoryBandwidthSource, "manufacturer-table");
+  assert.equal(
+    record.configuration.memoryBandwidthEntryId,
+    "nvidia-geforce-rtx-4070-ti-12gb",
+  );
+});
+
 test("pass that remains invalid after two retries fails the workload", async () => {
   const adapter = new FakeAdapter({ failW4: true });
   const record = await runBenchmark({ adapter, model: "fixture:8b" });
@@ -174,15 +209,29 @@ test("pass that remains invalid after two retries fails the workload", async () 
     3,
   );
   assert.equal(record.derived.generationTokensPerSecond.median, null);
-  assert.equal(record.derived.failureRate.percent, 25);
+  assert.deepEqual(record.derived.failureRate, {
+    failedMeasuredPasses: 5,
+    totalMeasuredPasses: 16,
+    percent: 31.25,
+  });
 });
 
-test("W1 runs once and records failure without retry", async () => {
+test("invalid W1 retries with a fresh forced unload and can recover", async () => {
+  const adapter = new FakeAdapter({ retryW1: true });
+  const record = await runBenchmark({ adapter, model: "fixture:8b" });
+  assert.equal(adapter.calls.w1, 2);
+  assert.equal(adapter.calls.forceUnload, 2);
+  assert.equal(record.rawMeasurements.workloads.w1.failed, false);
+  assert.equal(record.rawMeasurements.workloads.w1.measuredPasses[0].attempts.length, 2);
+});
+
+test("W1 fails only after two retries and three forced unloads", async () => {
   const adapter = new FakeAdapter({ failW1: true });
   const record = await runBenchmark({ adapter, model: "fixture:8b" });
-  assert.equal(adapter.calls.w1, 1);
+  assert.equal(adapter.calls.w1, 3);
+  assert.equal(adapter.calls.forceUnload, 3);
   assert.equal(record.rawMeasurements.workloads.w1.failed, true);
-  assert.equal(record.rawMeasurements.workloads.w1.measuredPasses[0].attempts.length, 1);
+  assert.equal(record.rawMeasurements.workloads.w1.measuredPasses[0].attempts.length, 3);
 });
 
 test("quality conditions refuse by default", async () => {

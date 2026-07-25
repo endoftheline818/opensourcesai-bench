@@ -39,9 +39,9 @@ export async function normalRecord() {
     };
   }
   return {
-    protocolVersion: "osai-bench/1",
-    clientVersion: "0.1.0",
-    scoringVersion: "osai-bench-derive/1",
+    protocolVersion: "osai-bench/1.1",
+    clientVersion: "0.2.0",
+    scoringVersion: "osai-bench-derive/1.1",
     createdAt: "2026-07-25T00:00:00.000Z",
     qualityOverride: false,
     cohortEligible: true,
@@ -51,7 +51,19 @@ export async function normalRecord() {
       version: "0.30.10",
       endpoint: "loopback",
       layerAssignment: null,
-      contextMemoryRequiredBytes: null,
+      kvCacheMetadata: {
+        source: "ollama.show.model_info",
+        architecture: "fixture",
+        blockCount: 32,
+        kvHeadCount: 8,
+        attentionHeadCount: 32,
+        embeddingLength: 4096,
+        headDimension: 128,
+        resolvedElementType: null,
+        projectedBytes: null,
+        calculationAvailable: false,
+        missingInputs: ["resolvedKvCacheElementType"],
+      },
     },
     model: {
       identifier: "fixture-model:8b-q4",
@@ -80,6 +92,9 @@ export async function normalRecord() {
     },
     configuration: {
       memoryBandwidthGBps: 500,
+      memoryBandwidthSource: "manual",
+      memoryBandwidthTableVersion: null,
+      memoryBandwidthEntryId: null,
       fixedOptions: { temperature: 0, seed: 42, stream: true },
       workloads: {
         w1: { numCtx: 512 },

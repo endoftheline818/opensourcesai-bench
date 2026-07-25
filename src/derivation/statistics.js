@@ -16,14 +16,14 @@ export function median(values) {
     : sorted[middle];
 }
 
-export function populationStandardDeviation(values) {
+export function sampleStandardDeviation(values) {
   const average = mean(values);
-  if (average === null) {
+  if (average === null || values.length < 2) {
     return null;
   }
   const variance =
     values.reduce((sum, value) => sum + (value - average) ** 2, 0) /
-    values.length;
+    (values.length - 1);
   return Math.sqrt(variance);
 }
 
@@ -32,5 +32,5 @@ export function coefficientOfVariation(values) {
   if (average === null || average === 0) {
     return null;
   }
-  return populationStandardDeviation(values) / average;
+  return sampleStandardDeviation(values) / average;
 }

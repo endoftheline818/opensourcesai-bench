@@ -74,6 +74,76 @@ export function extractLayerAssignment(showResponse, runningEntry) {
   return null;
 }
 
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+export function extractKvCacheMetadata(showResponse) {
+  const info = showResponse?.model_info;
+  if (!info || typeof info !== "object") {
+    return {
+      source: "ollama.show.model_info",
+      architecture: null,
+      blockCount: null,
+      kvHeadCount: null,
+      attentionHeadCount: null,
+      embeddingLength: null,
+      headDimension: null,
+      resolvedElementType: null,
+      projectedBytes: null,
+      calculationAvailable: false,
+      missingInputs: ["architectureMetadata", "resolvedKvCacheElementType"],
+    };
+  }
+
+  const architecture =
+    typeof info["general.architecture"] === "string"
+      ? info["general.architecture"]
+      : null;
+  const prefix = architecture ? `${architecture}.` : null;
+  const blockCount = positiveInteger(prefix && info[`${prefix}block_count`]);
+  const kvHeadCount = positiveInteger(
+    prefix && info[`${prefix}attention.head_count_kv`],
+  );
+  const attentionHeadCount = positiveInteger(
+    prefix && info[`${prefix}attention.head_count`],
+  );
+  const embeddingLength = positiveInteger(
+    prefix && info[`${prefix}embedding_length`],
+  );
+  const explicitKeyLength = positiveInteger(
+    prefix && info[`${prefix}attention.key_length`],
+  );
+  const derivedHeadDimension =
+    embeddingLength &&
+    attentionHeadCount &&
+    embeddingLength % attentionHeadCount === 0
+      ? embeddingLength / attentionHeadCount
+      : null;
+  const headDimension = explicitKeyLength ?? derivedHeadDimension;
+  const missingInputs = [];
+  if (!blockCount) missingInputs.push("blockCount");
+  if (!kvHeadCount) missingInputs.push("kvHeadCount");
+  if (!headDimension) missingInputs.push("headDimension");
+  // /api/show describes the model file, not the resolved runtime KV-cache
+  // representation. OLLAMA_KV_CACHE_TYPE can change the type actually in use.
+  missingInputs.push("resolvedKvCacheElementType");
+
+  return {
+    source: "ollama.show.model_info",
+    architecture,
+    blockCount,
+    kvHeadCount,
+    attentionHeadCount,
+    embeddingLength,
+    headDimension,
+    resolvedElementType: null,
+    projectedBytes: null,
+    calculationAvailable: false,
+    missingInputs,
+  };
+}
+
 export function extractResolvedConfiguration(showResponse, workloads) {
   return {
     fixedOptions: { temperature: 0, seed: 42, stream: true },

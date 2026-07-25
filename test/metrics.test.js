@@ -33,8 +33,8 @@ test("headline metrics are medians and CVs across five measured passes", async (
   assert.equal(derived.timeToFirstTokenMs.median, 220);
   assert.equal(derived.coldLoad.seconds, 3);
   assert.deepEqual(derived.failureRate, {
-    failedWorkloads: 0,
-    totalWorkloads: 4,
+    failedMeasuredPasses: 0,
+    totalMeasuredPasses: 16,
     percent: 0,
   });
 });
@@ -82,11 +82,12 @@ test("roofline is unavailable without either denominator input", async () => {
 test("failed workload is retained, counted, and excluded from headline metric", async () => {
   const record = await normalRecord();
   record.rawMeasurements.workloads.w4.failed = true;
+  record.rawMeasurements.workloads.w4.measuredPasses[0].valid = false;
   const derived = deriveMetrics(record);
   assert.equal(derived.generationTokensPerSecond.median, null);
   assert.deepEqual(derived.failureRate, {
-    failedWorkloads: 1,
-    totalWorkloads: 4,
-    percent: 25,
+    failedMeasuredPasses: 1,
+    totalMeasuredPasses: 16,
+    percent: 6.25,
   });
 });

@@ -1,7 +1,7 @@
 {
   "name": "@opensourcesai/bench",
-  "version": "0.1.0",
-  "description": "A local-only Ollama inference benchmark implementing osai-bench/1.",
+  "version": "0.2.0",
+  "description": "A local-only Ollama inference benchmark implementing osai-bench/1.1.",
   "type": "module",
   "bin": {
     "osai-bench": "src/cli.js"
@@ -12,6 +12,7 @@
   },
   "files": [
     "src",
+    "data",
     "schema",
     "fixtures",
     "LICENSE",

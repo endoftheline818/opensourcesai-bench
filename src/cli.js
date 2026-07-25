@@ -5,17 +5,18 @@ import { stdin as input, stdout as output } from "node:process";
 import path from "node:path";
 import { OllamaAdapter } from "./adapters/ollama.js";
 import { QualityRefusalError, runBenchmark } from "./benchmark.js";
+import { matchGpuMemoryBandwidth } from "./derivation/gpu-bandwidth.js";
 import { renderReport } from "./output/report.js";
 import { writeResult } from "./output/writer.js";
 
 function usage() {
   return `Usage: osai-bench [options]
 
-Runs the complete osai-bench/1 protocol against Ollama on this machine.
+Runs the complete osai-bench/1.1 protocol against Ollama on this machine.
 
 Options:
   --model <name>                 Select an installed model non-interactively
-  --memory-bandwidth <GB/s>      GPU memory bandwidth for roofline utilization
+  --memory-bandwidth <GB/s>      Override auto-detected GPU memory bandwidth
   --quality-override             Run despite detected quality preconditions
   --output <path>                Result JSON path (must not already exist)
   --help                         Show this help
@@ -115,7 +116,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   output.write(
-    "OpenSourcesAI Bench — local-only osai-bench/1\n" +
+    "OpenSourcesAI Bench — local-only osai-bench/1.1\n" +
       "No telemetry, upload, analytics, version check, or external network access.\n",
   );
   const adapter = new OllamaAdapter();
@@ -138,7 +139,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const readline =
-    !args.model || args.memoryBandwidthGBps === null
+    input.isTTY && (!args.model || args.memoryBandwidthGBps === null)
       ? createInterface({ input, output })
       : null;
   try {
@@ -152,10 +153,17 @@ export async function main(argv = process.argv.slice(2)) {
     if (!models.some((entry) => (entry.name ?? entry.model) === model)) {
       throw new Error(`Model ${model} is not installed`);
     }
-    const memoryBandwidthGBps =
-      args.memoryBandwidthGBps ??
-      (input.isTTY ? await askBandwidth(readline) : null);
-
+    let memoryBandwidthGBps = args.memoryBandwidthGBps;
+    if (memoryBandwidthGBps === null && input.isTTY) {
+      const system = await adapter.collectSystemSnapshot();
+      const automaticMatch = matchGpuMemoryBandwidth({
+        model: system.gpu.model,
+        totalVramBytes: system.gpu.totalVramBytes,
+      });
+      if (!automaticMatch) {
+        memoryBandwidthGBps = await askBandwidth(readline);
+      }
+    }
     const record = await runBenchmark({
       adapter,
       model,

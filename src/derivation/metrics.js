@@ -52,12 +52,19 @@ export function deriveMetrics(record) {
     samples: coldValues.length,
   };
 
-  const workloads = Object.values(record.rawMeasurements.workloads);
-  const failedWorkloads = workloads.filter((workload) => workload.failed).length;
+  const measuredPasses = Object.values(record.rawMeasurements.workloads).flatMap(
+    (workload) => workload.measuredPasses,
+  );
+  const failedMeasuredPasses = measuredPasses.filter(
+    (pass) => !pass.valid,
+  ).length;
   const failureRate = {
-    failedWorkloads,
-    totalWorkloads: workloads.length,
-    percent: (failedWorkloads / workloads.length) * 100,
+    failedMeasuredPasses,
+    totalMeasuredPasses: measuredPasses.length,
+    percent:
+      measuredPasses.length > 0
+        ? (failedMeasuredPasses / measuredPasses.length) * 100
+        : null,
   };
 
   const bandwidth = record.configuration.memoryBandwidthGBps;

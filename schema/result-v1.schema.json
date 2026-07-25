@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://opensourcesai.com/schemas/osai-bench-result-v1.schema.json",
-  "title": "OpenSourcesAI Bench result",
+  "$id": "https://opensourcesai.com/schemas/osai-bench-result-v1.1.schema.json",
+  "title": "OpenSourcesAI Bench result protocol 1.1",
   "type": "object",
   "required": [
     "protocolVersion",
@@ -18,7 +18,7 @@
     "derived"
   ],
   "properties": {
-    "protocolVersion": { "const": "osai-bench/1" },
+    "protocolVersion": { "const": "osai-bench/1.1" },
     "clientVersion": { "type": "string" },
     "scoringVersion": { "type": "string" },
     "createdAt": { "type": "string", "format": "date-time" },
@@ -38,13 +38,45 @@
     },
     "runtime": {
       "type": "object",
-      "required": ["name", "version", "endpoint", "layerAssignment"],
+      "required": ["name", "version", "endpoint", "layerAssignment", "kvCacheMetadata"],
       "properties": {
         "name": { "const": "ollama" },
         "version": { "type": ["string", "null"] },
         "endpoint": { "const": "loopback" },
         "layerAssignment": { "type": ["object", "null"] },
-        "contextMemoryRequiredBytes": { "type": ["number", "null"] }
+        "kvCacheMetadata": {
+          "type": "object",
+          "required": [
+            "source",
+            "architecture",
+            "blockCount",
+            "kvHeadCount",
+            "attentionHeadCount",
+            "embeddingLength",
+            "headDimension",
+            "resolvedElementType",
+            "projectedBytes",
+            "calculationAvailable",
+            "missingInputs"
+          ],
+          "properties": {
+            "source": { "const": "ollama.show.model_info" },
+            "architecture": { "type": ["string", "null"] },
+            "blockCount": { "type": ["integer", "null"], "minimum": 1 },
+            "kvHeadCount": { "type": ["integer", "null"], "minimum": 1 },
+            "attentionHeadCount": { "type": ["integer", "null"], "minimum": 1 },
+            "embeddingLength": { "type": ["integer", "null"], "minimum": 1 },
+            "headDimension": { "type": ["integer", "null"], "minimum": 1 },
+            "resolvedElementType": { "type": ["string", "null"] },
+            "projectedBytes": { "type": ["number", "null"], "minimum": 0 },
+            "calculationAvailable": { "const": false },
+            "missingInputs": {
+              "type": "array",
+              "contains": { "const": "resolvedKvCacheElementType" }
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -83,9 +115,23 @@
     },
     "configuration": {
       "type": "object",
-      "required": ["memoryBandwidthGBps", "fixedOptions", "workloads", "resolved"],
+      "required": [
+        "memoryBandwidthGBps",
+        "memoryBandwidthSource",
+        "memoryBandwidthTableVersion",
+        "memoryBandwidthEntryId",
+        "fixedOptions",
+        "workloads",
+        "resolved"
+      ],
       "properties": {
         "memoryBandwidthGBps": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "memoryBandwidthSource": {
+          "type": ["string", "null"],
+          "enum": ["manual", "manufacturer-table", null]
+        },
+        "memoryBandwidthTableVersion": { "type": ["string", "null"] },
+        "memoryBandwidthEntryId": { "type": ["string", "null"] },
         "fixedOptions": { "type": "object" },
         "workloads": { "type": "object" },
         "resolved": { "type": "object" }
@@ -120,7 +166,23 @@
         "failureRate",
         "roofline",
         "diagnostics"
-      ]
+      ],
+      "properties": {
+        "failureRate": {
+          "type": "object",
+          "required": [
+            "failedMeasuredPasses",
+            "totalMeasuredPasses",
+            "percent"
+          ],
+          "properties": {
+            "failedMeasuredPasses": { "type": "integer", "minimum": 0 },
+            "totalMeasuredPasses": { "type": "integer", "minimum": 0 },
+            "percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": false
+        }
+      }
     }
   },
   "$defs": {

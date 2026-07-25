@@ -33,7 +33,7 @@ export function renderReport(record) {
     metricLine("Prefill throughput", derived.prefillTokensPerSecond, "tok/s"),
     metricLine("Time to first token", derived.timeToFirstTokenMs, "ms"),
     `${"Cold load time".padEnd(30)} ${number(derived.coldLoad.seconds)} s`,
-    `${"Failure rate".padEnd(30)} ${number(derived.failureRate.percent)}% (${derived.failureRate.failedWorkloads}/${derived.failureRate.totalWorkloads} workloads)`,
+    `${"Failure rate".padEnd(30)} ${number(derived.failureRate.percent)}% (${derived.failureRate.failedMeasuredPasses}/${derived.failureRate.totalMeasuredPasses} measured passes)`,
     "",
   ];
 
@@ -73,6 +73,11 @@ export function renderReport(record) {
     }`,
     `- Quantization: ${record.model.quantization ?? "unknown"}`,
     `- Parameter size: ${record.model.parameterSize ?? "unknown"}`,
+    `- GPU memory bandwidth: ${
+      record.configuration.memoryBandwidthGBps === null
+        ? "unavailable"
+        : `${number(record.configuration.memoryBandwidthGBps)} GB/s (${record.configuration.memoryBandwidthSource})`
+    }`,
   );
   return lines.join("\n");
 }

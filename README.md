@@ -1,7 +1,8 @@
 # @opensourcesai/bench
 
-A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.1.0`
-implements the draft `osai-bench/1` measurement protocol.
+A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.2.0`
+implements the draft `osai-bench/1.1` measurement protocol. Records produced
+under `osai-bench/1` and `osai-bench/1.1` must never be pooled.
 
 The package reports separate measurements. It does not create a composite
 score, grade, asserted target, or “well-configured” threshold.
@@ -37,8 +38,9 @@ The interactive flow:
 
 1. connects only to local Ollama;
 2. lists installed models and asks you to select one;
-3. optionally asks for the GPU's published memory bandwidth, used only for the
-   generation roofline calculation;
+3. matches the detected GPU against a bundled manufacturer-sourced memory
+   bandwidth table when a sourced entry exists, otherwise offers optional
+   manual entry;
 4. checks run-quality preconditions;
 5. runs the four protocol workloads in order;
 6. prints a human-readable report; and
@@ -70,8 +72,9 @@ The workloads always run in this order:
 
 Every request fixes `temperature = 0`, `seed = 42`, streaming on, and the
 workload-specific `num_predict`, `num_ctx`, and `keep_alive` values. Invalid
-measured passes are retried no more than twice. A final invalid pass makes the
-workload fail; failure is retained as data.
+measured passes—including W1—are retried no more than twice. Every W1 retry is
+preceded by another forced unload, so it remains a cold request. A final invalid
+pass makes the workload fail; failure is retained as data.
 
 The report contains:
 
@@ -79,10 +82,11 @@ The report contains:
 - median long-prompt prefill throughput in tokens per second;
 - median time to first token in milliseconds;
 - one cold-load time in seconds;
-- coefficient of variation for each repeated workload;
-- workload failure rate;
+- coefficient of variation using sample standard deviation (`n - 1`) for each
+  repeated workload;
+- failed measured passes divided by all measured passes attempted;
 - generation-only bandwidth roofline utilization when both on-disk model
-  weight size and user-supplied memory bandwidth are available;
+  weight size and sourced or manually overridden memory bandwidth are available;
 - directly detected diagnostics, or an explicit `unavailable` status; and
 - the complete measurement configuration and version identifiers.
 
@@ -93,6 +97,28 @@ meaningful only for the same hardware and model. Prefill has no utilization
 percentage.
 
 No temperature or thermal data is measured.
+
+## GPU memory-bandwidth data
+
+Roofline utilization needs the card's published memory bandwidth. The CLI first
+checks [`data/gpu-memory-bandwidth-v1.js`](data/gpu-memory-bandwidth-v1.js)
+using the detection name reported by the collector and, where needed to
+distinguish variants, detected VRAM. `--memory-bandwidth <GB/s>` is always a
+manual override.
+
+**The entire bundled table requires human verification before release.** Every
+row carries its manufacturer, source document URL, and exact locator. Values
+must never be added from memory, secondary databases, retailer listings, or
+calculation from plausible specifications. If no uniquely sourced entry
+matches, roofline utilization is unavailable and throughput is still reported.
+The CLI makes no network request to resolve or verify the table.
+
+The initial sourced entries are:
+
+| Detection target | Bandwidth | Manufacturer source |
+|---|---:|---|
+| NVIDIA GeForce RTX 3080, 10 GB | 760 GB/s | NVIDIA, *NVIDIA Ampere GA102 GPU Architecture*, Table 2 |
+| NVIDIA GeForce RTX 4070 Ti, 12 GB | 504 GB/s | NVIDIA, *NVIDIA RTX Blackwell GPU Architecture*, Table 5 |
 
 ## Exactly what is written to disk
 
@@ -106,6 +132,8 @@ The output conforms to
   state;
 - Ollama version and model identifier/family/parameter size/quantization;
 - every fixed workload configuration;
+- memory bandwidth value, whether it came from a manual override or the
+  versioned table, and the matched entry identifier;
 - raw timing counters, token counts, client TTFT, validity results, and retry
   history for each pass;
 - all derived measurements and diagnostic states.
@@ -151,11 +179,15 @@ does not currently expose a standard per-layer GPU/CPU assignment in the API
 responses this client consumes, so layer-based diagnostics report
 `unavailable` instead of inferring layers from byte counts.
 
-The protocol also leaves the W1/W2/W4 context values, warm `keep_alive`, the
-non-Ollama GPU-memory threshold, the definition of comfortable context
-headroom, population-vs-sample standard deviation, and the failure-rate
-denominator unspecified. These choices must be resolved in the protocol before
-the first stable release.
+The W1/W2/W4 context values, warm `keep_alive`, and non-Ollama GPU-memory
+threshold remain provisional. v1.1 now pins sample-standard-deviation CV and
+the pass-level failure denominator.
+
+Ollama `/api/show` supplies model architecture metadata such as block count,
+attention heads, KV heads, and embedding length, but it does not supply the
+resolved KV-cache element type actually in use. That missing runtime input
+prevents an authoritative KV-cache byte calculation. The context-VRAM-headroom
+diagnostic therefore remains explicitly unavailable with no invented threshold.
 
 ## License
 

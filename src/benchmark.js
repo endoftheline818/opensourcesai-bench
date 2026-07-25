@@ -10,10 +10,12 @@ import { deriveMetrics } from "./derivation/metrics.js";
 import { validatePass } from "./derivation/validity.js";
 import {
   extractLayerAssignment,
+  extractKvCacheMetadata,
   extractModelMetadata,
   extractRawMeasurement,
   extractResolvedConfiguration,
 } from "./derivation/ollama.js";
+import { resolveGpuMemoryBandwidth } from "./derivation/gpu-bandwidth.js";
 
 export class QualityRefusalError extends Error {
   constructor(issues) {
@@ -111,19 +113,27 @@ async function runRepeatedWorkload(adapter, definition, model, onProgress) {
 
 async function runColdLoad(adapter, definition, model, onProgress) {
   const workload = { ...definition, model };
-  progress(onProgress, "Cold load: force-unloading target model");
-  await adapter.forceUnload(model);
-  progress(onProgress, "Cold load: measured pass 1/1");
-  const attempt = await collectAttempt(adapter, workload);
+  const attempts = [];
+  for (let retry = 0; retry <= MAX_RETRIES; retry += 1) {
+    progress(onProgress, "Cold load: force-unloading target model");
+    await adapter.forceUnload(model);
+    progress(
+      onProgress,
+      "Cold load: measured pass 1/1" +
+        (retry > 0 ? `, retry ${retry}/${MAX_RETRIES}` : ""),
+    );
+    const attempt = await collectAttempt(adapter, workload);
+    attempts.push(attempt);
+    if (attempt.validity.valid) break;
+  }
+  const finalAttempt = attempts.at(-1);
   const pass = {
     index: 1,
-    valid: attempt.validity.valid,
-    attempts: [attempt],
-    measurement: attempt.measurement,
-    validity: attempt.validity,
+    valid: finalAttempt.validity.valid,
+    attempts,
+    measurement: finalAttempt.measurement,
+    validity: finalAttempt.validity,
   };
-  // §5.3 says W1 runs once. Repeating it would contradict that rule, so an
-  // invalid W1 is recorded as failed rather than retried.
   return { warmup: null, measuredPasses: [pass], failed: !pass.valid };
 }
 
@@ -139,6 +149,11 @@ export async function runBenchmark({
   if (preconditions.issues.length > 0 && !qualityOverride) {
     throw new QualityRefusalError(preconditions.issues);
   }
+  const bandwidth = resolveGpuMemoryBandwidth({
+    manualGBps: memoryBandwidthGBps,
+    model: preconditions.system.gpu.model,
+    totalVramBytes: preconditions.system.gpu.totalVramBytes,
+  });
 
   const tagsRaw = await adapter.listModels();
   const tagsEntry = tagsRaw.models?.find(
@@ -189,7 +204,7 @@ export async function runBenchmark({
       version: runtimeDetection.raw.version ?? null,
       endpoint: "loopback",
       layerAssignment: extractLayerAssignment(showRaw, runningEntry),
-      contextMemoryRequiredBytes: null,
+      kvCacheMetadata: extractKvCacheMetadata(showRaw),
     },
     model: extractModelMetadata(tagsEntry, showRaw),
     system: sanitizeSystem(
@@ -197,10 +212,10 @@ export async function runBenchmark({
       atLoad.gpu.freeVramBytes ?? null,
     ),
     configuration: {
-      memoryBandwidthGBps:
-        Number.isFinite(memoryBandwidthGBps) && memoryBandwidthGBps > 0
-          ? memoryBandwidthGBps
-          : null,
+      memoryBandwidthGBps: bandwidth.memoryBandwidthGBps,
+      memoryBandwidthSource: bandwidth.source,
+      memoryBandwidthTableVersion: bandwidth.tableVersion,
+      memoryBandwidthEntryId: bandwidth.entryId,
       fixedOptions: { ...FIXED_OPTIONS, stream: true },
       workloads: Object.fromEntries(
         Object.entries(WORKLOADS).map(([id, workload]) => [

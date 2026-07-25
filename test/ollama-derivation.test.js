@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   extractLayerAssignment,
+  extractKvCacheMetadata,
   extractModelMetadata,
   extractRawMeasurement,
   finalOllamaChunk,
@@ -18,6 +19,31 @@ test("final chunk and raw counters are extracted without retaining model output"
   assert.equal(measurement.timeToFirstTokenMs, 225);
   assert.equal("response" in measurement, false);
   assert.deepEqual(response.chunks, original);
+});
+
+test("/api/show architecture metadata is retained but KV projection stays unavailable without resolved element type", () => {
+  const metadata = extractKvCacheMetadata({
+    model_info: {
+      "general.architecture": "llama",
+      "llama.block_count": 32,
+      "llama.attention.head_count": 32,
+      "llama.attention.head_count_kv": 8,
+      "llama.embedding_length": 4096,
+    },
+  });
+  assert.deepEqual(metadata, {
+    source: "ollama.show.model_info",
+    architecture: "llama",
+    blockCount: 32,
+    kvHeadCount: 8,
+    attentionHeadCount: 32,
+    embeddingLength: 4096,
+    headDimension: 128,
+    resolvedElementType: null,
+    projectedBytes: null,
+    calculationAvailable: false,
+    missingInputs: ["resolvedKvCacheElementType"],
+  });
 });
 
 test("model metadata uses Ollama tags size provisionally", async () => {
