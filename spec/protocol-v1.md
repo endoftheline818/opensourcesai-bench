@@ -1,7 +1,7 @@
-# OpenSourcesAI Bench — Measurement Protocol v1.2
+# OpenSourcesAI Bench — Measurement Protocol v1.3
 
 **Status:** DRAFT. Not frozen. Freeze at first public release (`v1.0.0`); version from there.
-**Applies to:** `@opensourcesai/bench` client, protocol identifier `osai-bench/1.2`.
+**Applies to:** `@opensourcesai/bench` client, protocol identifier `osai-bench/1.3`.
 **Companion document:** the recommendation-governance boundary lives in the site repo
 (`opensourcesai-frontend/docs/`), not here. This document constrains *measurement*;
 that one constrains *what the resulting data may influence*.
@@ -123,6 +123,9 @@ because that is what a user experiences.
 
 **W3 — Long-prompt prefill.** Long prompt, accepted band 2000 tokens to `num_ctx - 1`.
 `num_predict = 1`. Measures prefill throughput in a regime where the GPU is actually saturated.
+Every call — the warmup and every attempt of every measured pass, including retries — sends a
+distinct prompt: a short deterministic marker unique to that call is prepended to the base
+prompt (§5.2.1). The base prompt content itself is fixed and unchanged by this.
 
 > **The prompt must fit inside `num_ctx`, with margin.** v1.1 specified "~4096 tokens" against a
 > `num_ctx` of 4096 and shipped a prompt roughly twice that size. The runtime truncated it to
@@ -139,6 +142,39 @@ because that is what a user experiences.
 
 **W4 — Sustained generation.** Same short prompt and band as W2. `num_predict = 512`.
 Measures generation throughput, the primary bandwidth-bound metric.
+
+### 5.2.1 Defeating runtime prompt-prefix caching (W3 only)
+
+Discovered on the first real hardware run (protocol 1.2, RTX 4070 Ti, llama3.1:8b, Ollama
+0.32.3). W3 sent the identical prompt on the warmup and all five measured passes while the
+model stayed resident (`keep_alive: "5m"`). Ollama's runner reused the previous call's KV state
+for the shared prefix: `prompt_eval_count` still reported ~2,650, but `prompt_eval_duration`
+collapsed to ~13ms — not on one or two passes, on **all five** — reporting a prefill throughput
+of ~208,000 tok/s. That is the cost of a cache lookup, not a measurement, and it meant §12.5
+remained unanswered by a run that appeared to complete cleanly.
+
+**The fix:** every W3 call — warmup and every attempt of every measured pass, including
+retries — is prepended with a short marker unique to that call, of the form
+`[osai-bench cache-bust w3#<n>]`, where `<n>` increments once per call in a fixed, deterministic
+sequence. This guarantees the prefix diverges from token 0 on every request, defeating prefix
+reuse regardless of the runtime's internal caching implementation. The base prompt content is
+untouched; only a few tokens are added, well inside the accepted band's headroom. Because the
+marker is a pure function of `(workload id, call index)`, and the call sequence is itself fixed
+by the protocol, the exact text of any call is fully reconstructible without a raw-record
+schema change.
+
+**Considered and rejected:** setting `keep_alive: 0` per call, which does defeat the cache — by
+forcing a full model reload. That is exactly what W1 already does deliberately, and this
+document is explicit that W1 is the only workload that measures loading. Applying it to W3
+would fold multi-second reload time into every prefill pass, replacing one contamination
+(a cache hit) with a worse one (model-load time misattributed to prefill).
+
+**Scoped to W3 only.** W1 already forces an unload before every attempt, so it was never
+affected. W4's generation throughput reads through the KV cache regardless of how the prompt
+entered it, so decode measurements are unaffected. W2's time-to-first-token is dominated by
+launch overhead by design (§5.2), so a cache hit on its short prompt would shave a negligible
+amount off an already-small prefill component; W2 and W4 continue to send their prompt
+unmodified.
 
 ### 5.3 Repetitions for variance
 
@@ -418,6 +454,35 @@ No v1.1 change closes these hardware questions.
 ---
 
 ## 13. Changelog
+
+### `osai-bench/1.3` — 2026-07-25 (protocol revision, first real-hardware run)
+
+Found on the first real hardware session (RTX 4070 Ti, llama3.1:8b, Ollama 0.32.3), after the
+1.2 sizing fix let W3 pass its validity band for the first time.
+
+- **W3's identical repeated prompt let the runtime reuse KV state across calls.** All five
+  measured passes — not a subset — collapsed to ~13ms `prompt_eval_duration` against a
+  `prompt_eval_count` that still read ~2,650, reporting ~208,000 tok/s prefill throughput. §12.5
+  remains open: this run measured a cache lookup, not prefill. See §5.2.1 for the full account
+  and the considered-and-rejected `keep_alive: 0` alternative.
+- **Fix:** every W3 call — warmup and every attempt including retries — is prepended with a
+  short marker unique to that call, guaranteeing the prefix diverges from token 0 regardless of
+  the runtime's caching implementation. Scoped to W3 only; §5.2.1 explains why W1/W2/W4 are
+  unaffected and unchanged.
+- **Also fixed, same session:** a single-sample GPU-utilization precondition check produced two
+  false refusals (25%, then 32%) on an idle desktop within seconds of each other, then succeeded
+  with nothing closed — `nvidia-smi`'s utilization figure is a rolling, bursty measure, and one
+  of dozens of ordinary GPU-accelerated desktop apps redrawing during a single sample window was
+  enough to trip the §4 threshold. The collector now takes three samples ~200ms apart and uses
+  the median; a real competing workload still refuses correctly across all three.
+- **Also fixed:** `writeResult` and `writeFixtureCapture` did not create their output directory,
+  so a completed run's JSON was silently discarded with `ENOENT` if the target folder did not
+  already exist — observed directly on the first run. Both now create the parent directory
+  before writing; the no-overwrite guarantee is unchanged.
+
+Measurement semantics changed (a different effective prompt is sent for W3), so `protocolVersion`
+moves to `osai-bench/1.3`; 1.2 records are not poolable with 1.3 records. No derivation formula
+changed, so `scoringVersion` stays at `osai-bench-derive/1.3`. `clientVersion` 0.6.0.
 
 ### `osai-bench/1.2` + `osai-bench-derive/1.3` — 2026-07-25 (protocol revision)
 

@@ -3,15 +3,20 @@
 // Prompt sizing diagnostic. Answers §12.1 and §12.5 with measured token counts
 // instead of estimates, in seconds rather than a full protocol run.
 //
-// Sends each workload's real prompt to the local Ollama endpoint with
-// num_predict = 1, then reports the resolved prompt_eval_count against that
-// workload's accepted band and its num_ctx. Same loopback-only constraint as
-// the benchmark: no other network access.
+// Sends each workload's real call-time prompt (via buildCallPrompt, the same
+// construction the benchmark itself uses — see §5.2.1 for w3's cache-bust
+// marker) to the local Ollama endpoint with num_predict = 1, then reports the
+// resolved prompt_eval_count against that workload's accepted band and its
+// num_ctx. Same loopback-only constraint as the benchmark: no other network
+// access. Note: this issues one call per workload, so it cannot by itself
+// reveal the prefix-cache reuse that only appears when a prompt repeats
+// across a warm model — that is what the negative control and repeated real
+// runs are for.
 //
 //   node scripts/diagnose-prompts.js --model llama3.1:8b
 
 import { OllamaAdapter } from "../src/adapters/ollama.js";
-import { WORKLOADS } from "../src/protocol.js";
+import { buildCallPrompt, WORKLOADS } from "../src/protocol.js";
 import { extractRawMeasurement } from "../src/derivation/ollama.js";
 
 function parseModel(argv) {
@@ -39,8 +44,14 @@ console.log("-".repeat(78));
 let anyProblem = false;
 
 for (const workload of Object.values(WORKLOADS)) {
+  // Probed with the SAME prompt the benchmark's warmup call would actually
+  // send (callIndex 0) — not the bare workload.prompt — so this reports the
+  // real prompt_eval_count including the cache-bust marker's overhead (§5.2.1)
+  // for workloads where that applies. Without this, the diagnostic and the
+  // benchmark could silently disagree on what "the prompt" measures.
+  const actualPrompt = buildCallPrompt(workload, 0);
   // num_predict = 1 keeps this fast; only the prompt side is under test.
-  const probe = { ...workload, model, numPredict: 1 };
+  const probe = { ...workload, model, prompt: actualPrompt, numPredict: 1 };
   let count = null;
   let error = null;
   try {
@@ -70,7 +81,7 @@ for (const workload of Object.values(WORKLOADS)) {
   }
 
   console.log(
-    `${workload.id.padEnd(9)} ${String(workload.prompt.length).padEnd(7)} ` +
+    `${workload.id.padEnd(9)} ${String(actualPrompt.length).padEnd(7)} ` +
       `${String(count ?? "-").padEnd(18)} ${bandText.padEnd(17)} ` +
       `${String(workload.numCtx).padEnd(8)} ${verdict}`,
   );

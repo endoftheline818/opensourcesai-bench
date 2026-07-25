@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = "osai-bench/1.2";
+export const PROTOCOL_VERSION = "osai-bench/1.3";
 export const SCORING_VERSION = "osai-bench-derive/1.3";
 
 export const REPETITIONS = 5;
@@ -102,6 +102,33 @@ export const WORKLOADS = Object.freeze({
     keepAlive: "5m",
     warmups: WARMUP_PASSES,
     repetitions: REPETITIONS,
+    // Discovered on the first real hardware run (protocol 1.2, RTX 4070 Ti,
+    // llama3.1:8b): sending the identical prompt on every warmup + measured
+    // pass let Ollama's runner reuse the previous call's KV state for the
+    // shared prefix. prompt_eval_count still reported ~2,650, but
+    // prompt_eval_duration collapsed to ~13ms on every one of the five
+    // measured passes — not a few outliers, all of them — producing a
+    // reported prefill throughput of ~208,000 tok/s. That is a cache lookup,
+    // not a measurement; §12.5 remains unanswered by that run.
+    //
+    // The fix is a short deterministic marker, unique per call (warmup and
+    // every attempt including retries), prepended to the base prompt in
+    // benchmark.js. This guarantees the prefix diverges from token 0 on every
+    // request regardless of Ollama's internal caching implementation, without
+    // depending on an undocumented no-cache flag. keep_alive: 0 was
+    // considered and rejected: it does defeat the cache, but only by forcing
+    // a full model reload — exactly what W1 already does deliberately, and
+    // §5.2 is explicit that W1 is the only workload that measures loading.
+    // Applying it to W3 would fold multi-second reload time into every
+    // prefill pass, replacing one contamination with a worse one.
+    //
+    // Scoped to W3 only. W1 is already unaffected (forces an unload before
+    // every attempt). W4's generation throughput is unaffected (decode reads
+    // through the KV cache regardless of how the prompt entered it). W2's
+    // TTFT is dominated by launch overhead per §5.2's own design, so a cache
+    // hit on its ~45-token prompt would shave a negligible amount off an
+    // already-small prefill component.
+    varyPromptPerCall: true,
   }),
   w4: Object.freeze({
     id: "w4",
@@ -122,6 +149,19 @@ export const FIXED_OPTIONS = Object.freeze({
   temperature: 0,
   seed: 42,
 });
+
+// The exact prompt text sent for a given call. Lives here, beside WORKLOADS,
+// rather than in the execution layer (benchmark.js) or a standalone script
+// (scripts/diagnose-prompts.js), so both share one definition and cannot drift
+// apart on what actually gets sent to the runtime — see §5.2.1.
+//
+// Pure function of (workload.id, callIndex): the exact text for any call is
+// reconstructible from the protocol version and the call sequence alone, so no
+// raw-record schema change is needed to keep this reproducible.
+export function buildCallPrompt(workload, callIndex) {
+  if (!workload.varyPromptPerCall) return workload.prompt;
+  return `[osai-bench cache-bust ${workload.id}#${callIndex}] ${workload.prompt}`;
+}
 
 export const ROOFLINE_LIMITS = Object.freeze([
   "Applies to generation only. Prefill is compute-bound at scale and has no bandwidth denominator.",
