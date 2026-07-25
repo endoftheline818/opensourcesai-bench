@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  estimateRunDuration,
   QualityRefusalError,
   runBenchmark,
 } from "../src/benchmark.js";
@@ -167,12 +168,12 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.derived.passFailureRate.percent, 0);
   assert.equal(record.derived.attemptFailureRate.percent, 0);
   assert.equal(record.protocolVersion, "osai-bench/1.1");
-  assert.equal(record.clientVersion, "0.3.0");
+  assert.equal(record.clientVersion, "0.4.0");
   assert.equal(record.scoringVersion, "osai-bench-derive/1.2");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });
 
-test("fixture capture side channel retains the existing workload response shape", async () => {
+test("fixture capture side channel preserves ordered attempts per scheduled slot", async () => {
   const adapter = new FakeAdapter({ retryW2: true });
   let captured = null;
   const record = await runBenchmark({
@@ -187,15 +188,47 @@ test("fixture capture side channel retains the existing workload response shape"
   assert.equal(captured.tagsResponse.models.length, 1);
   assert.deepEqual(
     Object.fromEntries(
-      Object.entries(captured.workloads).map(([id, responses]) => [
+      Object.entries(captured.workloads).map(([id, slots]) => [
         id,
-        responses.length,
+        slots.length,
       ]),
     ),
     { w1: 1, w2: 6, w3: 6, w4: 6 },
   );
-  assert.equal(captured.workloads.w2[1].chunks[0].eval_count, 128);
-  assert.equal(captured.workloads.w2[1].chunks[0].response, "not persisted");
+  assert.equal(captured.workloads.w2[1].length, 2);
+  assert.equal(captured.workloads.w2[1][0].chunks[0].eval_count, 127);
+  assert.equal(captured.workloads.w2[1][1].chunks[0].eval_count, 128);
+  assert.equal(
+    captured.workloads.w2[1][0].chunks[0].response,
+    "not persisted",
+  );
+});
+
+test("duration estimate follows the configured schedule and identifies W3", () => {
+  assert.deepEqual(estimateRunDuration(), {
+    scheduledPasses: 19,
+    configuredTokens: 28_807,
+    estimatedMinutes: { minimum: 2, maximum: 10 },
+    dominantWorkload: "w3",
+  });
+});
+
+test("duration estimate is printed before the first workload", async () => {
+  const messages = [];
+  await runBenchmark({
+    adapter: new FakeAdapter(),
+    model: "fixture:8b",
+    onProgress: (message) => messages.push(message),
+  });
+  const estimateIndex = messages.findIndex((message) =>
+    message.startsWith("Estimated run time:"),
+  );
+  const firstWorkloadIndex = messages.findIndex((message) =>
+    message.startsWith("Cold load:"),
+  );
+  assert.ok(estimateIndex >= 0);
+  assert.ok(firstWorkloadIndex > estimateIndex);
+  assert.match(messages[estimateIndex + 1], /W3.*dominates.*num_ctx = 4096/i);
 });
 
 test("invalid measured pass retries and retains every attempt", async () => {
@@ -285,6 +318,34 @@ test("quality conditions refuse by default", async () => {
     (error) =>
       error instanceof QualityRefusalError &&
       error.issues[0].code === "on-battery",
+  );
+  assert.equal(adapter.calls.w1, 0);
+});
+
+test("resident-model check stays late when startup checks were supplied", async () => {
+  const adapter = new FakeAdapter();
+  adapter.checkModelDependentPreconditions = async () => ({
+    issues: [
+      {
+        code: "different-model-loaded",
+        message: "Ollama already has non-target model other:14b loaded",
+      },
+    ],
+    rawRunningModels: { models: [{ name: "other:14b" }] },
+  });
+  await assert.rejects(
+    () =>
+      runBenchmark({
+        adapter,
+        model: "fixture:8b",
+        modelIndependentPreconditions: {
+          issues: [],
+          system: systemSnapshot(),
+        },
+      }),
+    (error) =>
+      error instanceof QualityRefusalError &&
+      error.issues[0].code === "different-model-loaded",
   );
   assert.equal(adapter.calls.w1, 0);
 });

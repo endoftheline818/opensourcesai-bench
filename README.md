@@ -1,6 +1,6 @@
 # @opensourcesai/bench
 
-A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.3.0`
+A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.4.0`
 implements the draft `osai-bench/1.1` measurement protocol. Records produced
 under `osai-bench/1` and `osai-bench/1.1` must never be pooled.
 
@@ -37,14 +37,17 @@ npx @opensourcesai/bench
 The interactive flow:
 
 1. connects only to local Ollama;
-2. lists installed models and asks you to select one;
-3. matches the detected GPU against a bundled manufacturer-sourced memory
+2. checks battery/AC state, existing GPU activity, non-Ollama GPU-memory use,
+   and the single-GPU requirement before asking any question;
+3. lists installed models and asks you to select one;
+4. checks for a different model already resident in Ollama;
+5. matches the detected GPU against a bundled manufacturer-sourced memory
    bandwidth table when a sourced entry exists, otherwise offers optional
    manual entry;
-4. checks run-quality preconditions;
-5. runs the four protocol workloads in order;
-6. prints a human-readable report; and
-7. writes a JSON result in the current directory.
+6. prints a workload-count-based duration estimate;
+7. runs the four protocol workloads in order;
+8. prints a human-readable report; and
+9. writes a JSON result in the current directory.
 
 For automation:
 
@@ -76,7 +79,8 @@ captured file has the same `tagsResponse`, `showResponse`, and `workloads`
 shape as the committed derivation fixtures, so it can be loaded without
 editing. It is marked `"realHardware": true`, has no synthetic warning, and
 records its free-text label, UTC capture time, client version, and protocol
-version.
+version. Fixture schema `osai-bench-fixture/2` rejects the older
+single-response-per-slot shape instead of silently discarding retry evidence.
 
 Capture mode adds no network path. It uses responses already collected from
 the guarded local Ollama endpoint. A normal run without `--capture-fixture`
@@ -89,8 +93,10 @@ The fixture is deliberately narrower than the normal result:
 - `showResponse` contains only family/parameter/quantization details, the
   architecture fields needed by current derivation, and an explicit numeric
   layer assignment when Ollama provides one;
-- `workloads` contains one final measurement chunk per scheduled slot, plus
-  the W2/W3/W4 warmups and client-observed TTFT; and
+- `workloads` contains ordered scheduled slots; every slot is an array of raw
+  attempt responses, each reduced by the same numeric allowlist to one final
+  measurement chunk plus client-observed TTFT. Measured slots retain one to
+  three attempts, while W2/W3/W4 warmup slots retain exactly one; and
 - capture metadata and redaction notes occupy the remaining top-level fields.
 
 It never writes the other installed models, prompts or request bodies, model
@@ -101,6 +107,12 @@ field is listed in `redactions.pathValuesRedacted`. After writing, the CLI
 prints the exact field groups and response counts captured, the absolute
 destination, and every applied omission/redaction rule for review before
 commit.
+
+Before W1 begins, the CLI prints a coarse 2–10 minute planning range derived
+from the 19 configured workload passes and their scheduled prompt/output token
+counts. It states that hardware and retries can extend the estimate and calls
+out W3 at `num_ctx = 4096` as the dominant configured work. It never reads a
+prior output file or carries timing state between runs.
 
 ## Exactly what is measured
 
@@ -204,6 +216,12 @@ A run is refused when the tool detects battery power, GPU utilization above
 Ollama model already loaded, or multiple GPUs. Refusal messages identify the
 condition. `--quality-override` preserves the run but makes it cohort
 ineligible.
+
+Battery state, GPU utilization, non-Ollama GPU-memory use, and the multi-GPU
+condition are checked before the model or optional-bandwidth prompts. The
+resident-model check necessarily follows model selection. If Ollama cannot be
+reached at any point, the error names the exact
+`http://127.0.0.1:11434` endpoint and tells the user to start Ollama and retry.
 
 NVIDIA utilization, VRAM, driver version, and compute-process memory use
 `nvidia-smi`. When it is unavailable, the collector falls back to Windows CIM

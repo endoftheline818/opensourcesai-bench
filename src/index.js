@@ -1,5 +1,13 @@
 export { OllamaAdapter } from "./adapters/ollama.js";
-export { QualityRefusalError, runBenchmark } from "./benchmark.js";
+export {
+  estimateRunDuration,
+  QualityRefusalError,
+  runBenchmark,
+} from "./benchmark.js";
+export {
+  FIXTURE_SCHEMA_VERSION,
+  validateFixtureFormat,
+} from "./fixture-format.js";
 export * from "./derivation/index.js";
 export { renderReport } from "./output/report.js";
 export {

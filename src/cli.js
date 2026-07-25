@@ -165,11 +165,17 @@ export async function main(argv = process.argv.slice(2)) {
     return 1;
   }
 
-  const readline =
-    input.isTTY && (!args.model || args.memoryBandwidthGBps === null)
-      ? createInterface({ input, output })
-      : null;
+  let readline = null;
   try {
+    const independent = await adapter.checkModelIndependentPreconditions();
+    if (independent.issues.length > 0 && !args.qualityOverride) {
+      throw new QualityRefusalError(independent.issues);
+    }
+
+    readline =
+      input.isTTY && (!args.model || args.memoryBandwidthGBps === null)
+        ? createInterface({ input, output })
+        : null;
     const model =
       args.model ??
       (input.isTTY
@@ -182,10 +188,9 @@ export async function main(argv = process.argv.slice(2)) {
     }
     let memoryBandwidthGBps = args.memoryBandwidthGBps;
     if (memoryBandwidthGBps === null && input.isTTY) {
-      const system = await adapter.collectSystemSnapshot();
       const automaticMatch = matchGpuMemoryBandwidth({
-        model: system.gpu.model,
-        totalVramBytes: system.gpu.totalVramBytes,
+        model: independent.system.gpu.model,
+        totalVramBytes: independent.system.gpu.totalVramBytes,
       });
       if (!automaticMatch) {
         memoryBandwidthGBps = await askBandwidth(readline);
@@ -197,6 +202,7 @@ export async function main(argv = process.argv.slice(2)) {
       model,
       memoryBandwidthGBps,
       qualityOverride: args.qualityOverride,
+      modelIndependentPreconditions: independent,
       onProgress: (message) => output.write(`  ${message}\n`),
       onFixtureCapture: args.captureFixturePath
         ? (capture) => {

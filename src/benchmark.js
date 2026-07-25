@@ -29,6 +29,58 @@ function progress(callback, message) {
   callback?.(message);
 }
 
+// Presentation-only planning band used to turn the configured token schedule
+// into a deliberately broad wall-clock range. It is not a performance target
+// and never enters a result record or derivation.
+const ESTIMATE_TOKENS_PER_SECOND_RANGE = Object.freeze({
+  slow: 50,
+  fast: 200,
+});
+
+function displayMinutes(seconds) {
+  return Math.max(1, Math.round(seconds / 60));
+}
+
+export function estimateRunDuration(workloads = WORKLOADS) {
+  let scheduledPasses = 0;
+  let configuredTokens = 0;
+  const workloadTokens = {};
+  for (const [id, workload] of Object.entries(workloads)) {
+    const requests = workload.warmups + workload.repetitions;
+    const tokensPerRequest =
+      (workload.intendedPromptTokens ?? 0) + workload.numPredict;
+    const tokens = requests * tokensPerRequest;
+    scheduledPasses += requests;
+    configuredTokens += tokens;
+    workloadTokens[id] = tokens;
+  }
+  const fastestSeconds =
+    configuredTokens / ESTIMATE_TOKENS_PER_SECOND_RANGE.fast;
+  const slowestSeconds =
+    configuredTokens / ESTIMATE_TOKENS_PER_SECOND_RANGE.slow;
+  return {
+    scheduledPasses,
+    configuredTokens,
+    estimatedMinutes: {
+      minimum: displayMinutes(fastestSeconds),
+      maximum: displayMinutes(slowestSeconds),
+    },
+    dominantWorkload: Object.entries(workloadTokens).sort(
+      (left, right) => right[1] - left[1],
+    )[0]?.[0] ?? null,
+  };
+}
+
+function durationEstimateMessages() {
+  const estimate = estimateRunDuration();
+  return [
+    `Estimated run time: about ${estimate.estimatedMinutes.minimum}-${estimate.estimatedMinutes.maximum} minutes ` +
+      `for ${estimate.scheduledPasses} scheduled workload passes ` +
+      "(hardware-dependent; retries can extend it).",
+    `W3 dominates the configured work at num_ctx = ${WORKLOADS.w3.numCtx}.`,
+  ];
+}
+
 function sanitizeSystem(system, freeVramBytesAtLoad = null) {
   return {
     cpu: { model: system.cpu.model },
@@ -71,7 +123,7 @@ async function measuredPass(
   captureResponses,
 ) {
   const attempts = [];
-  let finalRaw = null;
+  const capturedAttempts = captureResponses ? [] : null;
   for (let retry = 0; retry <= MAX_RETRIES; retry += 1) {
     progress(
       onProgress,
@@ -79,13 +131,13 @@ async function measuredPass(
         (retry > 0 ? `, retry ${retry}/${MAX_RETRIES}` : ""),
     );
     const attempt = await collectAttempt(adapter, workload);
-    finalRaw = attempt.raw;
+    capturedAttempts?.push(attempt.raw);
     attempts.push({
       measurement: attempt.measurement,
       validity: attempt.validity,
     });
     if (attempt.validity.valid) {
-      captureResponses?.push(attempt.raw);
+      captureResponses?.push(capturedAttempts);
       return {
         index: passIndex,
         valid: true,
@@ -96,9 +148,9 @@ async function measuredPass(
     }
   }
   const finalAttempt = attempts.at(-1);
-  // The final raw response is retained only in the opt-in capture side
-  // channel. It never enters the normal result record.
-  captureResponses?.push(finalRaw);
+  // Raw attempts are retained only in the opt-in capture side channel. They
+  // never enter the normal result record.
+  captureResponses?.push(capturedAttempts);
   return {
     index: passIndex,
     valid: false,
@@ -118,7 +170,7 @@ async function runRepeatedWorkload(
   const workload = { ...definition, model };
   progress(onProgress, `${workload.name}: warmup (discarded)`);
   const warmupRaw = await adapter.generate(model, workload);
-  captureResponses?.push(warmupRaw);
+  captureResponses?.push([warmupRaw]);
   const warmup = extractRawMeasurement(warmupRaw);
   const measuredPasses = [];
   for (let index = 1; index <= workload.repetitions; index += 1) {
@@ -148,7 +200,7 @@ async function runColdLoad(
 ) {
   const workload = { ...definition, model };
   const attempts = [];
-  let finalRaw = null;
+  const capturedAttempts = captureResponses ? [] : null;
   for (let retry = 0; retry <= MAX_RETRIES; retry += 1) {
     progress(onProgress, "Cold load: force-unloading target model");
     await adapter.forceUnload(model);
@@ -158,14 +210,14 @@ async function runColdLoad(
         (retry > 0 ? `, retry ${retry}/${MAX_RETRIES}` : ""),
     );
     const attempt = await collectAttempt(adapter, workload);
-    finalRaw = attempt.raw;
+    capturedAttempts?.push(attempt.raw);
     attempts.push({
       measurement: attempt.measurement,
       validity: attempt.validity,
     });
     if (attempt.validity.valid) break;
   }
-  captureResponses?.push(finalRaw);
+  captureResponses?.push(capturedAttempts);
   const finalAttempt = attempts.at(-1);
   const pass = {
     index: 1,
@@ -184,16 +236,30 @@ export async function runBenchmark({
   qualityOverride = false,
   onProgress,
   onFixtureCapture,
+  modelIndependentPreconditions = null,
 }) {
   progress(onProgress, "Checking run-quality preconditions");
-  const preconditions = await adapter.checkPreconditions(model);
-  if (preconditions.issues.length > 0 && !qualityOverride) {
-    throw new QualityRefusalError(preconditions.issues);
+  let resolvedPreconditions;
+  if (modelIndependentPreconditions === null) {
+    resolvedPreconditions = await adapter.checkPreconditions(model);
+  } else {
+    const dependent = await adapter.checkModelDependentPreconditions(model);
+    resolvedPreconditions = {
+      issues: [
+        ...modelIndependentPreconditions.issues,
+        ...dependent.issues,
+      ],
+      system: modelIndependentPreconditions.system,
+      rawRunningModels: dependent.rawRunningModels,
+    };
+  }
+  if (resolvedPreconditions.issues.length > 0 && !qualityOverride) {
+    throw new QualityRefusalError(resolvedPreconditions.issues);
   }
   const bandwidth = resolveGpuMemoryBandwidth({
     manualGBps: memoryBandwidthGBps,
-    model: preconditions.system.gpu.model,
-    totalVramBytes: preconditions.system.gpu.totalVramBytes,
+    model: resolvedPreconditions.system.gpu.model,
+    totalVramBytes: resolvedPreconditions.system.gpu.totalVramBytes,
   });
 
   const tagsRaw = await adapter.listModels();
@@ -214,6 +280,9 @@ export async function runBenchmark({
     typeof onFixtureCapture === "function"
       ? { w1: [], w2: [], w3: [], w4: [] }
       : null;
+  for (const message of durationEstimateMessages()) {
+    progress(onProgress, message);
+  }
   rawMeasurements.workloads.w1 = await runColdLoad(
     adapter,
     WORKLOADS.w1,
@@ -245,7 +314,7 @@ export async function runBenchmark({
     createdAt: new Date().toISOString(),
     qualityOverride,
     cohortEligible: !qualityOverride,
-    qualityConditions: publicQualityConditions(preconditions.issues),
+    qualityConditions: publicQualityConditions(resolvedPreconditions.issues),
     runtime: {
       name: "ollama",
       version: runtimeDetection.raw.version ?? null,
@@ -255,7 +324,7 @@ export async function runBenchmark({
     },
     model: extractModelMetadata(tagsEntry, showRaw),
     system: sanitizeSystem(
-      preconditions.system,
+      resolvedPreconditions.system,
       atLoad.gpu.freeVramBytes ?? null,
     ),
     configuration: {

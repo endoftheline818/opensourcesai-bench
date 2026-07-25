@@ -6,7 +6,7 @@ import {
   generationTokensPerSecond,
   prefillTokensPerSecond,
 } from "../src/derivation/metrics.js";
-import { loadFixture, normalRecord } from "./helpers.js";
+import { normalRecord } from "./helpers.js";
 
 test("per-pass throughput and cold-load formulas use Ollama nanosecond counters", () => {
   assert.equal(
@@ -105,15 +105,7 @@ test("failed workload is retained, counted, and excluded from headline metric", 
 });
 
 test("synthetic retry-then-succeed fixture separates attempt failures from pass failures", async () => {
-  const fixture = await loadFixture("synthetic-retry-then-succeed.json");
-  const record = await normalRecord();
-  const recoveredPass =
-    record.rawMeasurements.workloads.w2.measuredPasses[0];
-  recoveredPass.attempts = fixture.attempts;
-  recoveredPass.valid = true;
-  recoveredPass.measurement = fixture.attempts.at(-1).measurement;
-  recoveredPass.validity = fixture.attempts.at(-1).validity;
-
+  const record = await normalRecord("synthetic-retry-then-succeed.json");
   const derived = deriveMetrics(record);
   assert.deepEqual(derived.passFailureRate, {
     failedMeasuredPasses: 0,

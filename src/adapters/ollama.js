@@ -35,6 +35,15 @@ function requestOptions(endpoint, method) {
   };
 }
 
+function ollamaConnectionError(endpoint, error) {
+  const url = new URL(endpoint, OLLAMA_ORIGIN).toString();
+  return new Error(
+    `Could not reach local Ollama at ${url}: ${error.message}. ` +
+      "Start Ollama and retry.",
+    { cause: error },
+  );
+}
+
 async function requestJson(endpoint, { method = "GET", body } = {}) {
   return new Promise((resolve, reject) => {
     const request = http.request(requestOptions(endpoint, method), (response) => {
@@ -62,7 +71,9 @@ async function requestJson(endpoint, { method = "GET", body } = {}) {
     request.setTimeout(REQUEST_TIMEOUT_MS, () => {
       request.destroy(new Error(`Ollama ${endpoint} timed out`));
     });
-    request.on("error", reject);
+    request.on("error", (error) => {
+      reject(ollamaConnectionError(endpoint, error));
+    });
     if (body !== undefined) {
       request.write(JSON.stringify(body));
     }
@@ -143,7 +154,9 @@ async function requestNdjson(endpoint, body) {
       });
     });
     request.setTimeout(0);
-    request.on("error", reject);
+    request.on("error", (error) => {
+      reject(ollamaConnectionError(endpoint, error));
+    });
     request.write(JSON.stringify(body));
     dispatchAt = performance.now();
     request.end();
@@ -360,6 +373,64 @@ function isOllamaProcess(processName) {
   return /(^|[\\/])ollama(?:\.exe)?$/i.test(processName);
 }
 
+function modelIndependentIssues(system) {
+  const issues = [];
+  if (system.power.onBattery === true) {
+    issues.push({
+      code: "on-battery",
+      message: "System is running on battery power",
+    });
+  }
+  if (
+    Number.isFinite(system.gpu.utilizationPercent) &&
+    system.gpu.utilizationPercent > 10
+  ) {
+    issues.push({
+      code: "gpu-utilization",
+      message: `Pre-existing GPU utilization is ${system.gpu.utilizationPercent}% (>10%)`,
+    });
+  }
+
+  const nonOllama = system.gpuProcesses.filter(
+    (processEntry) => !isOllamaProcess(processEntry.processName),
+  );
+  const nonOllamaMiB = nonOllama.reduce(
+    (sum, processEntry) => sum + (processEntry.usedMemoryMiB || 0),
+    0,
+  );
+  if (nonOllamaMiB > NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB) {
+    issues.push({
+      code: "non-ollama-gpu-memory",
+      message:
+        `Non-Ollama compute processes use ${nonOllamaMiB} MiB GPU memory ` +
+        `(>${NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB} MiB provisional threshold)`,
+    });
+  }
+
+  if (system.gpuCount > 1) {
+    issues.push({
+      code: "multiple-gpus-unsupported",
+      message: `${system.gpuCount} GPUs detected; osai-bench/1.1 supports one discrete GPU`,
+    });
+  }
+  return issues;
+}
+
+function modelDependentIssues(runningRaw, targetModel) {
+  const issues = [];
+  const loaded = Array.isArray(runningRaw.models) ? runningRaw.models : [];
+  for (const model of loaded) {
+    const identifier = model.name ?? model.model;
+    if (identifier && identifier !== targetModel) {
+      issues.push({
+        code: "different-model-loaded",
+        message: `Ollama already has non-target model ${identifier} loaded`,
+      });
+    }
+  }
+  return issues;
+}
+
 export class OllamaAdapter {
   constructor() {
     this.name = "ollama";
@@ -459,65 +530,37 @@ export class OllamaAdapter {
     };
   }
 
+  async checkModelIndependentPreconditions() {
+    const system = await this.collectSystemSnapshot();
+    return { issues: modelIndependentIssues(system), system };
+  }
+
+  async checkModelDependentPreconditions(targetModel) {
+    const rawRunningModels = await this.listRunningModels();
+    return {
+      issues: modelDependentIssues(rawRunningModels, targetModel),
+      rawRunningModels,
+    };
+  }
+
   async checkPreconditions(targetModel) {
-    const [system, runningRaw] = await Promise.all([
-      this.collectSystemSnapshot(),
-      this.listRunningModels(),
+    const [independent, dependent] = await Promise.all([
+      this.checkModelIndependentPreconditions(),
+      this.checkModelDependentPreconditions(targetModel),
     ]);
-    const issues = [];
-
-    if (system.power.onBattery === true) {
-      issues.push({
-        code: "on-battery",
-        message: "System is running on battery power",
-      });
-    }
-    if (
-      Number.isFinite(system.gpu.utilizationPercent) &&
-      system.gpu.utilizationPercent > 10
-    ) {
-      issues.push({
-        code: "gpu-utilization",
-        message: `Pre-existing GPU utilization is ${system.gpu.utilizationPercent}% (>10%)`,
-      });
-    }
-
-    const nonOllama = system.gpuProcesses.filter(
-      (processEntry) => !isOllamaProcess(processEntry.processName),
-    );
-    const nonOllamaMiB = nonOllama.reduce(
-      (sum, processEntry) => sum + (processEntry.usedMemoryMiB || 0),
-      0,
-    );
-    if (nonOllamaMiB > NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB) {
-      issues.push({
-        code: "non-ollama-gpu-memory",
-        message:
-          `Non-Ollama compute processes use ${nonOllamaMiB} MiB GPU memory ` +
-          `(>${NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB} MiB provisional threshold)`,
-      });
-    }
-
-    if (system.gpuCount > 1) {
-      issues.push({
-        code: "multiple-gpus-unsupported",
-        message: `${system.gpuCount} GPUs detected; osai-bench/1.1 supports one discrete GPU`,
-      });
-    }
-
-    const loaded = Array.isArray(runningRaw.models) ? runningRaw.models : [];
-    for (const model of loaded) {
-      const identifier = model.name ?? model.model;
-      if (identifier && identifier !== targetModel) {
-        issues.push({
-          code: "different-model-loaded",
-          message: `Ollama already has non-target model ${identifier} loaded`,
-        });
-      }
-    }
-
-    return { issues, system, rawRunningModels: runningRaw };
+    return {
+      issues: [...independent.issues, ...dependent.issues],
+      system: independent.system,
+      rawRunningModels: dependent.rawRunningModels,
+    };
   }
 }
 
-export const __test = { assertLoopbackUrl, isOllamaProcess, parseCsvLine };
+export const __test = {
+  assertLoopbackUrl,
+  isOllamaProcess,
+  modelDependentIssues,
+  modelIndependentIssues,
+  ollamaConnectionError,
+  parseCsvLine,
+};
