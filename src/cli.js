@@ -101,6 +101,28 @@ function parseArguments(argv) {
   return result;
 }
 
+// Resolves a user-supplied model name against what Ollama actually reports.
+//
+// `ollama create NAME` produces `NAME:latest`, and /api/tags reports the full
+// tagged identifier — but users naturally type the bare name they created, and
+// Ollama's own CLI accepts it. An exact string match rejected those with
+// "Model X is not installed" while X was plainly listed by `ollama list`,
+// which reads as the tool being broken rather than the name being untagged.
+//
+// Returns the canonical installed identifier, or null if nothing matches.
+export function resolveInstalledModel(models, requested) {
+  const installed = models.map((entry) => entry.name ?? entry.model);
+  if (installed.includes(requested)) return requested;
+  // Only a bare name (no explicit tag) may be widened to :latest. A request
+  // that already names a tag must match that exact tag, never silently fall
+  // back to a different one — the model identity is part of the cohort key.
+  if (!requested.includes(":")) {
+    const latest = `${requested}:latest`;
+    if (installed.includes(latest)) return latest;
+  }
+  return null;
+}
+
 async function selectModel(models, readline) {
   output.write("\nInstalled Ollama models:\n");
   models.forEach((model, index) => {
@@ -177,15 +199,19 @@ export async function main(argv = process.argv.slice(2)) {
       input.isTTY && (!args.model || args.memoryBandwidthGBps === null)
         ? createInterface({ input, output })
         : null;
-    const model =
+    const requestedModel =
       args.model ??
       (input.isTTY
         ? await selectModel(models, readline)
         : (() => {
             throw new Error("--model is required when stdin is not interactive");
           })());
-    if (!models.some((entry) => (entry.name ?? entry.model) === model)) {
-      throw new Error(`Model ${model} is not installed`);
+    const model = resolveInstalledModel(models, requestedModel);
+    if (model === null) {
+      throw new Error(
+        `Model ${requestedModel} is not installed. Installed models: ` +
+          `${models.map((entry) => entry.name ?? entry.model).join(", ")}`,
+      );
     }
     let memoryBandwidthGBps = args.memoryBandwidthGBps;
     if (memoryBandwidthGBps === null && input.isTTY) {
