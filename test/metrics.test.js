@@ -6,7 +6,7 @@ import {
   generationTokensPerSecond,
   prefillTokensPerSecond,
 } from "../src/derivation/metrics.js";
-import { normalRecord } from "./helpers.js";
+import { loadFixture, normalRecord } from "./helpers.js";
 
 test("per-pass throughput and cold-load formulas use Ollama nanosecond counters", () => {
   assert.equal(
@@ -32,9 +32,14 @@ test("headline metrics are medians and CVs across five measured passes", async (
   assert.equal(derived.prefillTokensPerSecond.median, 4096 / 1.98);
   assert.equal(derived.timeToFirstTokenMs.median, 220);
   assert.equal(derived.coldLoad.seconds, 3);
-  assert.deepEqual(derived.failureRate, {
+  assert.deepEqual(derived.passFailureRate, {
     failedMeasuredPasses: 0,
     totalMeasuredPasses: 16,
+    percent: 0,
+  });
+  assert.deepEqual(derived.attemptFailureRate, {
+    failedAttempts: 0,
+    totalAttempts: 16,
     percent: 0,
   });
 });
@@ -83,11 +88,41 @@ test("failed workload is retained, counted, and excluded from headline metric", 
   const record = await normalRecord();
   record.rawMeasurements.workloads.w4.failed = true;
   record.rawMeasurements.workloads.w4.measuredPasses[0].valid = false;
+  record.rawMeasurements.workloads.w4.measuredPasses[0].attempts[0].validity.valid =
+    false;
   const derived = deriveMetrics(record);
   assert.equal(derived.generationTokensPerSecond.median, null);
-  assert.deepEqual(derived.failureRate, {
+  assert.deepEqual(derived.passFailureRate, {
     failedMeasuredPasses: 1,
     totalMeasuredPasses: 16,
     percent: 6.25,
+  });
+  assert.deepEqual(derived.attemptFailureRate, {
+    failedAttempts: 1,
+    totalAttempts: 16,
+    percent: 6.25,
+  });
+});
+
+test("synthetic retry-then-succeed fixture separates attempt failures from pass failures", async () => {
+  const fixture = await loadFixture("synthetic-retry-then-succeed.json");
+  const record = await normalRecord();
+  const recoveredPass =
+    record.rawMeasurements.workloads.w2.measuredPasses[0];
+  recoveredPass.attempts = fixture.attempts;
+  recoveredPass.valid = true;
+  recoveredPass.measurement = fixture.attempts.at(-1).measurement;
+  recoveredPass.validity = fixture.attempts.at(-1).validity;
+
+  const derived = deriveMetrics(record);
+  assert.deepEqual(derived.passFailureRate, {
+    failedMeasuredPasses: 0,
+    totalMeasuredPasses: 16,
+    percent: 0,
+  });
+  assert.deepEqual(derived.attemptFailureRate, {
+    failedAttempts: 1,
+    totalAttempts: 17,
+    percent: (1 / 17) * 100,
   });
 });

@@ -33,7 +33,8 @@ export function renderReport(record) {
     metricLine("Prefill throughput", derived.prefillTokensPerSecond, "tok/s"),
     metricLine("Time to first token", derived.timeToFirstTokenMs, "ms"),
     `${"Cold load time".padEnd(30)} ${number(derived.coldLoad.seconds)} s`,
-    `${"Failure rate".padEnd(30)} ${number(derived.failureRate.percent)}% (${derived.failureRate.failedMeasuredPasses}/${derived.failureRate.totalMeasuredPasses} measured passes)`,
+    `${"Pass failure rate".padEnd(30)} ${number(derived.passFailureRate.percent)}% (${derived.passFailureRate.failedMeasuredPasses}/${derived.passFailureRate.totalMeasuredPasses} scheduled measured passes)`,
+    `${"Attempt failure rate".padEnd(30)} ${number(derived.attemptFailureRate.percent)}% (${derived.attemptFailureRate.failedAttempts}/${derived.attemptFailureRate.totalAttempts} measured-pass attempts)`,
     "",
   ];
 

@@ -11,7 +11,7 @@ import {
 
 test("protocol constants preserve fixed options, workload order, and pass counts", () => {
   assert.equal(PROTOCOL_VERSION, "osai-bench/1.1");
-  assert.equal(SCORING_VERSION, "osai-bench-derive/1.1");
+  assert.equal(SCORING_VERSION, "osai-bench-derive/1.2");
   assert.deepEqual(FIXED_OPTIONS, { temperature: 0, seed: 42 });
   assert.deepEqual(Object.keys(WORKLOADS), ["w1", "w2", "w3", "w4"]);
   assert.equal(REPETITIONS, 5);

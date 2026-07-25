@@ -84,7 +84,10 @@ The report contains:
 - one cold-load time in seconds;
 - coefficient of variation using sample standard deviation (`n - 1`) for each
   repeated workload;
-- failed measured passes divided by all measured passes attempted;
+- pass failure rate: scheduled measured passes that exhausted all retries over
+  the 16 scheduled measured passes;
+- attempt failure rate: every measured-pass attempt failing a validity check
+  over all measured-pass attempts, including retries;
 - generation-only bandwidth roofline utilization when both on-disk model
   weight size and sourced or manually overridden memory bandwidth are available;
 - directly detected diagnostics, or an explicit `unavailable` status; and
@@ -118,7 +121,7 @@ The initial sourced entries are:
 | Detection target | Bandwidth | Manufacturer source |
 |---|---:|---|
 | NVIDIA GeForce RTX 3080, 10 GB | 760 GB/s | NVIDIA, *NVIDIA Ampere GA102 GPU Architecture*, Table 2 |
-| NVIDIA GeForce RTX 4070 Ti, 12 GB | 504 GB/s | NVIDIA, *NVIDIA RTX Blackwell GPU Architecture*, Table 5 |
+| NVIDIA GeForce RTX 4070 Ti, 12 GB | 504 GB/s | NVIDIA, *New GeForce RTX 50 Series Graphics Cards & Laptops Powered By NVIDIA Blackwell Bring Game-Changing AI and Neural Rendering Capabilities To Gamers and Creators*, “GeForce RTX 5070 Ti: 2X Faster Than The GeForce RTX 4070 Ti,” first paragraph |
 
 ## Exactly what is written to disk
 
@@ -136,7 +139,8 @@ The output conforms to
   versioned table, and the matched entry identifier;
 - raw timing counters, token counts, client TTFT, validity results, and retry
   history for each pass;
-- all derived measurements and diagnostic states.
+- both failure-rate numerators and denominators, not only their percentages;
+- all other derived measurements and diagnostic states.
 
 The result never contains prompts, model output, local paths, directory
 contents, hostname, username, MAC address, serial numbers, conversation
@@ -166,10 +170,11 @@ Tests cover every derivation, validity rule, retry rule, diagnostic, CLI
 argument rule, JSON privacy boundary, and loopback restriction without a GPU
 or Ollama.
 
-The committed fixtures are explicitly synthetic. Real recorded Ollama
-responses—including a deliberately misconfigured negative control—must replace
-or supplement them during RTX 3080 and RTX 4070 Ti hardware testing before the
-protocol freezes or the package reaches `v1.0.0`.
+The committed fixtures are explicitly synthetic, including the fixture that
+pins a failed attempt followed by a successful retry. Real recorded Ollama
+responses—including a deliberately misconfigured negative control and a
+recovered retry—must replace or supplement them during RTX 3080 and RTX 4070 Ti
+hardware testing before the protocol freezes or the package reaches `v1.0.0`.
 
 ## Draft-protocol limitations
 
@@ -180,8 +185,9 @@ responses this client consumes, so layer-based diagnostics report
 `unavailable` instead of inferring layers from byte counts.
 
 The W1/W2/W4 context values, warm `keep_alive`, and non-Ollama GPU-memory
-threshold remain provisional. v1.1 now pins sample-standard-deviation CV and
-the pass-level failure denominator.
+threshold remain provisional. v1.1 pins sample-standard-deviation CV; scoring
+revision `osai-bench-derive/1.2` reports both scheduled-pass failures and all
+failed attempts, including recovered retries.
 
 Ollama `/api/show` supplies model architecture metadata such as block count,
 attention heads, KV heads, and embedding length, but it does not supply the

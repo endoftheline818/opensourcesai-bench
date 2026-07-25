@@ -163,12 +163,13 @@
         "prefillTokensPerSecond",
         "timeToFirstTokenMs",
         "coldLoad",
-        "failureRate",
+        "passFailureRate",
+        "attemptFailureRate",
         "roofline",
         "diagnostics"
       ],
       "properties": {
-        "failureRate": {
+        "passFailureRate": {
           "type": "object",
           "required": [
             "failedMeasuredPasses",
@@ -178,6 +179,20 @@
           "properties": {
             "failedMeasuredPasses": { "type": "integer", "minimum": 0 },
             "totalMeasuredPasses": { "type": "integer", "minimum": 0 },
+            "percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": false
+        },
+        "attemptFailureRate": {
+          "type": "object",
+          "required": [
+            "failedAttempts",
+            "totalAttempts",
+            "percent"
+          ],
+          "properties": {
+            "failedAttempts": { "type": "integer", "minimum": 0 },
+            "totalAttempts": { "type": "integer", "minimum": 0 },
             "percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
           },
           "additionalProperties": false

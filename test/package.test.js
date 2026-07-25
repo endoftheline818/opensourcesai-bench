@@ -28,8 +28,12 @@ test("result schema accepts only protocol 1.1 records", async () => {
   );
   assert.equal(schema.properties.protocolVersion.const, "osai-bench/1.1");
   assert.deepEqual(
-    schema.properties.derived.properties.failureRate.required,
+    schema.properties.derived.properties.passFailureRate.required,
     ["failedMeasuredPasses", "totalMeasuredPasses", "percent"],
+  );
+  assert.deepEqual(
+    schema.properties.derived.properties.attemptFailureRate.required,
+    ["failedAttempts", "totalAttempts", "percent"],
   );
   assert.ok(
     schema.properties.runtime.required.includes("kvCacheMetadata"),

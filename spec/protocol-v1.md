@@ -178,17 +178,25 @@ coldLoadSeconds           = load_duration / 1e9                                 
 timeToFirstTokenMs        = <client-side, W2>                                     # W2
 runToRunCV                = sampleStdDev / mean, per repeated workload
 sampleStdDev              = sqrt(sum((x - mean)^2) / (n - 1))
-failureRate               = failed measured passes / total measured passes attempted
+passFailureRate           = passes that exhausted all retries / scheduled measured passes
+attemptFailureRate        = attempts failing §5.4 / all measured-pass attempts including retries
 ```
 
 The CV uses the **sample standard deviation (`n - 1`)**. For the repeated workloads, `n = 5`.
 `total_duration` is recorded but not used in any derived figure — it includes overheads the
 other fields already partition.
 
-The failure-rate denominator is the measured-pass population, not the four workloads and not
-the individual retry attempts. Under the fixed protocol, a complete run attempts 16 measured
-passes: 1 for W1 and 5 each for W2/W3/W4. A pass that becomes valid on retry is not failed; a
-pass still invalid after two retries is failed.
+Two failure rates are reported. The pass failure rate counts scheduled measured passes that
+exhausted their retries, over the total number of scheduled measured passes. The attempt failure
+rate counts every measured-pass attempt failing a §5.4 check, over the total number of
+measured-pass attempts including retries. Discarded warmup passes are excluded from both. A run
+that completes with no failed passes but a non-zero attempt failure rate is recovering from
+instability, and both figures are required to see that. The raw numerator and denominator are
+preserved alongside each percentage.
+
+Under the fixed protocol, a complete run schedules 16 measured passes: 1 for W1 and 5 each for
+W2/W3/W4. A pass that becomes valid on retry is not a failed scheduled pass, but each invalid
+attempt remains visible in the attempt failure rate.
 
 ### 6.2 Roofline utilization
 
@@ -229,7 +237,8 @@ Prefill throughput             tok/s   (median of 5)
 Time to first token            ms      (median of 5)
 Cold load time                 s       (single measured pass)
 Run-to-run variation           CV %    (sample standard deviation, per repeated workload)
-Failure rate                   %       (failed measured passes / measured passes attempted)
+Pass failure rate              %       (passes exhausting retries / scheduled measured passes)
+Attempt failure rate           %       (§5.4 failures / measured-pass attempts including retries)
 Roofline utilization           %       (generation only, with §6.2 limits attached)
 Full configuration + versions
 ```
@@ -394,6 +403,19 @@ No v1.1 change closes these hardware questions.
 
 ## 13. Changelog
 
+### `osai-bench-derive/1.2` — 2026-07-25 (derivation revision)
+
+- Split the former failure rate into `passFailureRate` and `attemptFailureRate`. The pass rate
+  preserves the existing scheduled-pass definition, while the attempt rate exposes transient
+  §5.4 failures that later succeed on retry.
+- Measurement semantics are unchanged: workloads, fixed parameters, repetitions, retry limits,
+  and validity checks remain identical. `protocolVersion` therefore remains `osai-bench/1.1`,
+  and records remain poolable across this derivation revision.
+- Raw measured-pass attempts were already stored immutably, so every existing
+  `osai-bench/1.1` record is recomputable under `osai-bench-derive/1.2`. This is the first
+  production exercise of the immutable-raw design: the derivation can become more informative
+  without recollecting or orphaning measurements.
+
 ### `osai-bench/1.1` — 2026-07-25
 
 - Corrected partial CPU offload to `cpuLayers > 0 && cpuLayers < totalLayers`.
@@ -402,9 +424,9 @@ No v1.1 change closes these hardware questions.
 - Separated repetitions for variance from retries for validity. W1 remains one measured pass but
   now receives up to two validity retries, each preceded by a forced unload. A transient invalid
   cold request should not fail without the same retry allowance as other measured passes.
-- Pinned failure rate to failed measured passes divided by all measured passes attempted. The
-  workload denominator restricted the output to 25-point increments and discarded pass-level
-  information.
+- Pinned the original pass failure rate to failed measured passes divided by all scheduled
+  measured passes. The workload denominator restricted the output to 25-point increments and
+  discarded pass-level information.
 - Pinned CV to sample standard deviation (`n - 1`). With five measured observations, this is the
   conventional estimate of run-to-run variability and prevents derivation drift.
 - Investigated `/api/show` for the context-headroom diagnostic. Architecture fields are present,

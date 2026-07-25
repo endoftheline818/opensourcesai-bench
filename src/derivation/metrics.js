@@ -55,15 +55,25 @@ export function deriveMetrics(record) {
   const measuredPasses = Object.values(record.rawMeasurements.workloads).flatMap(
     (workload) => workload.measuredPasses,
   );
-  const failedMeasuredPasses = measuredPasses.filter(
-    (pass) => !pass.valid,
-  ).length;
-  const failureRate = {
+  const failedMeasuredPasses = measuredPasses.filter((pass) => !pass.valid).length;
+  const passFailureRate = {
     failedMeasuredPasses,
     totalMeasuredPasses: measuredPasses.length,
     percent:
       measuredPasses.length > 0
         ? (failedMeasuredPasses / measuredPasses.length) * 100
+        : null,
+  };
+  const measuredAttempts = measuredPasses.flatMap((pass) => pass.attempts);
+  const failedAttempts = measuredAttempts.filter(
+    (attempt) => !attempt.validity.valid,
+  ).length;
+  const attemptFailureRate = {
+    failedAttempts,
+    totalAttempts: measuredAttempts.length,
+    percent:
+      measuredAttempts.length > 0
+        ? (failedAttempts / measuredAttempts.length) * 100
         : null,
   };
 
@@ -86,7 +96,8 @@ export function deriveMetrics(record) {
     prefillTokensPerSecond: prefill,
     timeToFirstTokenMs: timeToFirstToken,
     coldLoad,
-    failureRate,
+    passFailureRate,
+    attemptFailureRate,
     roofline: {
       modelWeightsGB: weightGB,
       memoryBandwidthGBps: bandwidth ?? null,

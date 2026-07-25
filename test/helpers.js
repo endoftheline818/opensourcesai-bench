@@ -41,7 +41,7 @@ export async function normalRecord() {
   return {
     protocolVersion: "osai-bench/1.1",
     clientVersion: "0.2.0",
-    scoringVersion: "osai-bench-derive/1.1",
+    scoringVersion: "osai-bench-derive/1.2",
     createdAt: "2026-07-25T00:00:00.000Z",
     qualityOverride: false,
     cohortEligible: true,

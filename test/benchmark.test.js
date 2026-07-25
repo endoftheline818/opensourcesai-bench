@@ -164,10 +164,11 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   });
   assert.equal(record.rawMeasurements.workloads.w2.measuredPasses.length, 5);
   assert.equal(record.rawMeasurements.workloads.w2.warmup.eval_count, 128);
-  assert.equal(record.derived.failureRate.percent, 0);
+  assert.equal(record.derived.passFailureRate.percent, 0);
+  assert.equal(record.derived.attemptFailureRate.percent, 0);
   assert.equal(record.protocolVersion, "osai-bench/1.1");
   assert.equal(record.clientVersion, "0.2.0");
-  assert.equal(record.scoringVersion, "osai-bench-derive/1.1");
+  assert.equal(record.scoringVersion, "osai-bench-derive/1.2");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });
 
@@ -180,6 +181,16 @@ test("invalid measured pass retries and retains every attempt", async () => {
   assert.equal(first.attempts.length, 2);
   assert.equal(first.attempts[0].validity.valid, false);
   assert.equal(first.attempts[1].validity.valid, true);
+  assert.deepEqual(record.derived.passFailureRate, {
+    failedMeasuredPasses: 0,
+    totalMeasuredPasses: 16,
+    percent: 0,
+  });
+  assert.deepEqual(record.derived.attemptFailureRate, {
+    failedAttempts: 1,
+    totalAttempts: 17,
+    percent: (1 / 17) * 100,
+  });
 });
 
 test("collector GPU identity resolves bundled bandwidth when no manual override is supplied", async () => {
@@ -209,10 +220,15 @@ test("pass that remains invalid after two retries fails the workload", async () 
     3,
   );
   assert.equal(record.derived.generationTokensPerSecond.median, null);
-  assert.deepEqual(record.derived.failureRate, {
+  assert.deepEqual(record.derived.passFailureRate, {
     failedMeasuredPasses: 5,
     totalMeasuredPasses: 16,
     percent: 31.25,
+  });
+  assert.deepEqual(record.derived.attemptFailureRate, {
+    failedAttempts: 15,
+    totalAttempts: 26,
+    percent: (15 / 26) * 100,
   });
 });
 

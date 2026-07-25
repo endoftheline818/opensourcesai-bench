@@ -36,9 +36,11 @@ export const GPU_MEMORY_BANDWIDTH_TABLE = Object.freeze({
       memoryBandwidthGBps: 504,
       source: Object.freeze({
         manufacturer: "NVIDIA",
-        title: "NVIDIA RTX Blackwell GPU Architecture",
-        url: "https://images.nvidia.com/aem-dam/Solutions/geforce/blackwell/nvidia-rtx-blackwell-gpu-architecture.pdf",
-        locator: "Table 5, RTX 4070 Ti, Memory Bandwidth",
+        title:
+          "New GeForce RTX 50 Series Graphics Cards & Laptops Powered By NVIDIA Blackwell Bring Game-Changing AI and Neural Rendering Capabilities To Gamers and Creators",
+        url: "https://www.nvidia.com/en-us/geforce/news/rtx-50-series-graphics-cards-gpu-laptop-announcements/",
+        locator:
+          'Section "GeForce RTX 5070 Ti: 2X Faster Than The GeForce RTX 4070 Ti", first paragraph: "RTX 4070 Ti’s 504 GB/sec"',
       }),
     }),
   ]),

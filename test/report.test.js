@@ -14,7 +14,8 @@ test("human report displays every required measurement and roofline limit", asyn
     "Prefill throughput",
     "Time to first token",
     "Cold load time",
-    "Failure rate",
+    "Pass failure rate",
+    "Attempt failure rate",
     "Roofline utilization",
     "Diagnostics",
     "Configuration",
@@ -33,13 +34,16 @@ test("report says roofline unavailable when denominator input is missing", async
   assert.match(report, /Roofline utilization\s+unavailable/);
 });
 
-test("report identifies the measured-pass failure denominator and bandwidth source", async () => {
+test("report identifies both failure denominators and bandwidth source", async () => {
   const record = await normalRecord();
   record.rawMeasurements.workloads.w4.failed = true;
   record.rawMeasurements.workloads.w4.measuredPasses[0].valid = false;
+  record.rawMeasurements.workloads.w4.measuredPasses[0].attempts[0].validity.valid =
+    false;
   record.derived = deriveMetrics(record);
   const report = renderReport(record);
-  assert.match(report, /1\/16 measured passes/);
+  assert.match(report, /1\/16 scheduled measured passes/);
+  assert.match(report, /1\/16 measured-pass attempts/);
   assert.match(report, /500\.00 GB\/s \(manual\)/);
   assert.doesNotMatch(report, /workloads\)/);
 });
