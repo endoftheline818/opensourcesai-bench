@@ -194,6 +194,9 @@ test("terminal summary names captured fields, counts, redactions, and path", () 
     fixture,
   });
   assert.match(summary, /Saved real-hardware fixture: \/tmp\/summary-check\.json/);
+  assert.match(summary, /label: summary-check/);
+  assert.match(summary, /clientVersion: 0\.3\.0/);
+  assert.match(summary, /protocolVersion: osai-bench\/1\.1/);
   assert.match(summary, /tagsResponse\.models\[0\]/);
   assert.match(summary, /showResponse\.model_info/);
   assert.match(summary, /w1=1, w2=6, w3=6, w4=6/);
