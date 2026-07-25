@@ -186,6 +186,41 @@ function parseCsvLine(line) {
   return line.split(",").map((value) => value.trim());
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function median(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+// nvidia-smi's utilization.gpu is "percent of the last sample period during
+// which a kernel was executing" — a rolling, bursty figure, not a stable
+// state. Ordinary desktop apps (browser tabs, Electron/CEF apps, the NVIDIA
+// overlay itself) redraw periodically and can register a brief spike well
+// above the §4 contention threshold even when nothing is actually competing
+// for the GPU. Observed directly: one nvidia-smi call read 25% and refused a
+// run; a manual nvidia-smi call moments later, with nothing closed, read 0%.
+// A short burst of samples plus the median means a single transient blip
+// cannot trigger a refusal on an otherwise idle machine, while sustained
+// contention — a real competing workload — still shows up across all of them.
+const GPU_UTILIZATION_SAMPLES = 3;
+const GPU_UTILIZATION_SAMPLE_INTERVAL_MS = 200;
+
+async function sampleGpuUtilization() {
+  const result = await execSafe("nvidia-smi", [
+    "--query-gpu=utilization.gpu",
+    "--format=csv,noheader,nounits",
+  ]);
+  if (!result.ok || !result.stdout) return null;
+  return result.stdout.split(/\r?\n/).map((line) => Number(line.trim()));
+}
+
 async function queryNvidia() {
   const gpuQuery = await execSafe("nvidia-smi", [
     "--query-gpu=name,memory.total,memory.free,utilization.gpu,driver_version",
@@ -205,6 +240,19 @@ async function queryNvidia() {
       utilizationPercent: Number(utilizationPercent),
       driverVersion,
     };
+  });
+
+  const utilizationSamples = [gpus.map((gpu) => gpu.utilizationPercent)];
+  for (let sample = 1; sample < GPU_UTILIZATION_SAMPLES; sample += 1) {
+    await sleep(GPU_UTILIZATION_SAMPLE_INTERVAL_MS);
+    const reading = await sampleGpuUtilization();
+    if (reading) utilizationSamples.push(reading);
+  }
+  gpus.forEach((gpu, index) => {
+    const values = utilizationSamples
+      .map((sample) => sample[index])
+      .filter((value) => Number.isFinite(value));
+    if (values.length > 0) gpu.utilizationPercent = median(values);
   });
 
   const processQuery = await execSafe("nvidia-smi", [
