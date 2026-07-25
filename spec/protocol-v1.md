@@ -17,13 +17,18 @@ a runtime, a model, a quantization, and a context configuration.
 ### 1.1 Non-goals for v1
 
 - **No composite score.** v1 reports measurements only. A weighted "Setup Score" requires
-  empirically justified weights, which requires data that does not yet exist.
+  empirically justified weights, which requires data that does not yet exist. Shipping
+  arbitrary weights now means either living with them permanently or moving every user's
+  score later for reasons they did not cause.
 - **No named Efficiency or Stability score.** The underlying numbers (roofline utilization,
-  run-to-run variance) are reported directly.
-- **No network access of any kind.** v1 has no upload, telemetry, or version check. The only
-  HTTP endpoint is the local Ollama loopback endpoint.
+  run-to-run variance) are reported directly. Normalizing them into branded 0–100 scores
+  waits for a cohort.
+- **No network access of any kind except the local Ollama loopback endpoint.** v1 has no
+  upload, no telemetry, no version check. An audit that finds zero outbound calls is worth
+  more than a privacy policy.
 - **No thermal measurement.** Temperature reporting is inconsistent across vendors and
-  platforms, and thermals reflect ambient conditions, case, and fan curves — not setup quality.
+  platforms, and thermals reflect ambient conditions, case, and fan curves — not setup
+  quality. May return later as an optional diagnostic, never as a score input.
 
 ---
 
@@ -93,11 +98,13 @@ keep_alive       = <per workload, below>
 ```
 
 Everything else is left at the runtime's defaults, and the resolved values are **recorded**.
-The protocol does not tune the setup — it measures the setup as configured.
+The protocol does not tune the setup — it measures the setup as configured, which is the
+entire point.
 
 > **Determinism caveat.** Fixed seed and zero temperature do not guarantee identical output
-> across runtime versions, quantization formats, or GPU backends. This is acceptable because
-> v1 measures speed, not output equivalence. It is why §5.4 validates token counts.
+> across runtime versions, quantization formats, or GPU backends — kernel differences and
+> non-deterministic reductions break that. This is acceptable because v1 measures *speed*,
+> not output equivalence. It is the reason §5.4 validates token counts rather than assuming them.
 
 ### 5.2 Workloads
 
@@ -109,14 +116,17 @@ all others run warm.
 
 **W2 — Short-prompt latency.** Prompt of ~32 tokens. `num_predict = 128`.
 Measures **time to first token** as observed wall-clock from request dispatch to first
-streamed token.
+streamed token. This deliberately includes launch overhead, scheduling, and CPU involvement,
+because that is what a user experiences.
 
 **W3 — Long-prompt prefill.** Prompt of ~4096 tokens. `num_predict = 1`.
 Measures prefill throughput in a regime where the GPU is actually saturated.
 
 > **Why two prompt lengths.** Prefill is only compute-bound once the workload is large enough
 > to saturate. Short-prompt prefill is dominated by launch overhead, CPU involvement, and
-> runtime implementation. W2 and W3 are reported separately and must never be combined.
+> runtime implementation. Reporting a single "prompt processing speed" silently averages two
+> different physical regimes and will not be stable across runtimes. W2 and W3 are reported
+> separately and must never be combined.
 
 **W4 — Sustained generation.** Prompt of ~32 tokens. `num_predict = 512`.
 Measures generation throughput, the primary bandwidth-bound metric.
@@ -137,8 +147,13 @@ Retries recover from invalid measured passes. They do not add samples to the rep
 Every measured pass, **including W1**, is invalid and must be retried up to two times before
 that measured pass and its workload are marked failed, when:
 
-- `eval_count` ≠ `num_predict` for W2/W4;
-- `prompt_eval_count` deviates from the intended prompt length by more than 5%; or
+- `eval_count` ≠ `num_predict` for W2/W4 — the model emitted EOS early, so `eval_duration`
+  covers fewer tokens than intended and is not comparable. **Prompts for W2 and W4 must be
+  chosen to elicit long continuations** to make this rare; the check exists because it cannot
+  be prevented outright.
+- `prompt_eval_count` deviates from the intended prompt length by more than 5% — tokenizer
+  differences between models are expected and are recorded, but a large deviation indicates
+  prompt truncation against `num_ctx`; or
 - any duration field is zero or absent.
 
 Each W1 retry performs another forced unload before the replacement request. This preserves
@@ -153,7 +168,8 @@ Failed measured passes and workloads are recorded, not omitted.
 
 ### 6.1 From Ollama's response fields
 
-Ollama returns nanosecond durations and token counts:
+Ollama returns nanosecond durations and token counts, so throughput is computed from the
+runtime's own accounting rather than from client-side wall-clock:
 
 ```text
 generationTokensPerSecond = eval_count        / (eval_duration        / 1e9)     # W4
@@ -166,7 +182,8 @@ failureRate               = failed measured passes / total measured passes attem
 ```
 
 The CV uses the **sample standard deviation (`n - 1`)**. For the repeated workloads, `n = 5`.
-`total_duration` is recorded but not used in a derived figure.
+`total_duration` is recorded but not used in any derived figure — it includes overheads the
+other fields already partition.
 
 The failure-rate denominator is the measured-pass population, not the four workloads and not
 the individual retry attempts. Under the fixed protocol, a complete run attempts 16 measured
@@ -176,7 +193,8 @@ pass still invalid after two retries is failed.
 ### 6.2 Roofline utilization
 
 Single-stream autoregressive decode requires reading the full weight set per generated token,
-making it memory-bandwidth-bound:
+making it memory-bandwidth-bound. This yields a theoretical ceiling computable from hardware
+specs alone, with no dataset:
 
 ```text
 theoreticalMaxTokensPerSecond = memoryBandwidthGBps / modelWeightsGB
@@ -194,10 +212,14 @@ causes no network access.
 
 **Stated limits — these must appear wherever the number is displayed:**
 
-- Applies to **generation only**. Prefill has no bandwidth denominator.
-- The ceiling degrades with context length because KV-cache reads add per-token memory traffic.
-- 100% is unreachable in practice. The number is meaningful only compared against the same
-  hardware and model.
+- Applies to **generation only**. Prefill is compute-bound at scale and has no bandwidth
+  denominator. There is no TFLOPs figure in the hardware data, so v1 reports prefill
+  throughput as a bare number with no utilization percentage.
+- The ceiling **degrades with context length**, because KV cache reads add to per-token
+  memory traffic. v1 fixes context per workload so figures are comparable to each other;
+  the ceiling is not valid across different context sizes.
+- 100% is unreachable in practice. The number is only meaningful compared against the same
+  hardware and model, which is why §8 governs how it may be presented.
 
 ### 6.3 What v1.1 reports
 
@@ -212,14 +234,17 @@ Roofline utilization           %       (generation only, with §6.2 limits attac
 Full configuration + versions
 ```
 
-No aggregate. No normalization. No letter grade.
+No aggregate. No 0–100 normalization. No letter grade.
 
 ---
 
 ## 7. Diagnostics — detected, not inferred
 
-The client does **not** tell the user what a well-configured system "should" reach. Instead it
-reports specific conditions read directly from the runtime:
+The client does **not** tell the user what a well-configured system "should" reach. That
+target does not exist without a cohort, and asserting one is false precision.
+
+Instead it reports **specific conditions read directly from the runtime**, each of which is
+independently verifiable and independently actionable:
 
 | Diagnostic | Detection |
 |---|---|
@@ -231,6 +256,9 @@ reports specific conditions read directly from the runtime:
 The partial-offload condition deliberately excludes both endpoints: zero CPU layers is full GPU
 offload, while CPU layers equal to total layers is CPU-only execution and belongs to the separate
 CPU-only diagnostic.
+
+A report reading *"61% of bandwidth ceiling; 7 of 33 layers on CPU"* is more useful and more
+defensible than any percentage target, and it holds at n=1.
 
 ### 7.1 Context VRAM headroom availability
 
@@ -260,8 +288,13 @@ revision define and justify a concrete VRAM fraction threshold.
 
 ## 8. Cohort comparison (specified now, implemented later)
 
-Not in the v1 client. Comparison proceeds down this ladder until a level qualifies, and the
-level used is always displayed:
+Not in the v1 client — it requires the server side. Specified here so the client records
+everything the comparison will need.
+
+### 8.1 Pooling ladder
+
+Comparison proceeds down this ladder until a level qualifies. **The level used is always
+displayed alongside the result.**
 
 | Level | Cohort key |
 |---|---|
@@ -270,11 +303,23 @@ level used is always displayed:
 | 3 | Same GPU × approximate model size band × approximate quant band |
 | 4 | **No cohort** — hardware-derived roofline only |
 
-A percentile is shown only when both `n ≥ 10` distinct submitting accounts and interquartile
-range ≤ 40% of the median. Below either threshold, results are labelled "early estimate" and
-no percentile is shown. Level 4 never uses percentile language.
+### 8.2 Gates
 
-Runtime version is part of the cohort key and must be annotated on history views.
+A percentile is shown only when **both** hold:
+
+- `n ≥ 10` distinct submitting accounts (not distinct records — one user cannot populate a cell)
+- Interquartile range ≤ 40% of the median (dispersion gate)
+
+Below either threshold, results are labelled **"early estimate"** and no percentile is shown.
+
+**Level 4 is not a weak percentile — it is a different kind of statement.** It must be
+visually and verbally distinct from levels 1–3 and must never use percentile language.
+
+### 8.3 Version drift
+
+Runtime version is part of the cohort key *and* must be annotated on any history view. A
+user whose throughput improves because Ollama shipped a faster kernel — with no action on
+their part — will otherwise read it as a defect in the benchmark.
 
 ---
 
@@ -282,25 +327,28 @@ Runtime version is part of the cohort key and must be annotated on history views
 
 ### 9.1 Collected
 
-CPU model · GPU model · VRAM · system RAM · OS/version · GPU driver version · runtime
-name/version · model identifier/family/parameter count/quantization · context configuration ·
-all measurements above · all three version identifiers.
+CPU model · GPU model · VRAM · system RAM · OS and version · GPU driver version ·
+runtime name and version · model identifier, family, parameter count, quantization ·
+context configuration · all measurements above · all three version identifiers.
 
 ### 9.2 Never collected
 
 Local file paths or directory contents · conversation history · user prompts · model outputs ·
-hostname, username, MAC, or serial numbers · installed software inventory · any identifier not
-required to interpret a measurement.
+hostname, username, MAC, or serial numbers · installed software inventory · any identifier
+not required to interpret a measurement.
 
 ### 9.3 Quasi-identification
 
-The tuple `CPU + GPU + RAM + OS + driver version` is distinguishing for unusual configurations.
-Any future public display requires a k-anonymity threshold independent of §8.2.
+The tuple `CPU + GPU + RAM + OS + driver version` is itself distinguishing for unusual
+configurations. Any future **public** display (leaderboard, aggregate page) requires a
+k-anonymity threshold on the displayed cell, independent of the §8.2 statistical gates,
+which serve a different purpose. Private profile display is unaffected.
 
 ### 9.4 Consent layers
 
-Three independent levels: local-only → private account history → anonymized inclusion in
-aggregates. Consent to one is never consent to the next.
+Three independent, separately revocable levels: local-only (v1 default and only mode) →
+private account history → anonymized inclusion in aggregates. Consent to one is never
+consent to the next.
 
 ---
 
@@ -308,12 +356,12 @@ aggregates. Consent to one is never consent to the next.
 
 The client separates, at a module boundary:
 
-- **Collection** — one adapter per runtime. Calls the runtime and captures raw responses.
-- **Derivation** — pure functions over raw measurements. Data in, data out, no hardware or
-  runtime required.
+- **Collection** — one adapter per runtime. Calls the runtime, captures raw response. Requires hardware.
+- **Derivation** — pure functions over raw measurements. Requires nothing.
 
-Recorded real runtime responses are committed as fixtures, including a deliberately
-misconfigured setup. Raw measurements are immutable and authoritative.
+Recorded real runtime responses are committed as fixtures, **including at least one from a
+deliberately misconfigured setup**. This makes every derivation rule, diagnostic trigger, gate,
+and the §11 negative control testable in ordinary CI with no GPU present.
 
 ---
 
@@ -323,18 +371,22 @@ Before first publication, the protocol must be run against a knowingly broken co
 forced partial offload, oversized context, forced CPU fallback — and must be shown to produce
 materially worse numbers and to fire the corresponding §7 diagnostics.
 
-**If a badly configured machine scores well, the protocol measures nothing.** This gates freeze.
+**If a badly configured machine scores well, the protocol measures nothing.** This is the
+single cheapest test that validates the entire premise, and it gates the freeze.
 
 ---
 
 ## 12. Open questions — resolve during hardware testing, before freeze
 
-1. Exact prompt texts for W2/W3/W4.
-2. Whether five repetitions are sufficient for stable CV on RTX 3080 and RTX 4070 Ti.
-3. Whether `load_duration` is reliable enough after a forced unload.
-4. Whether Ollama reliably exposes per-layer GPU/CPU assignment in a machine-readable form.
-5. The W3 `num_ctx`; 4096 remains a starting assumption.
-6. Whether `/api/tags` size is the correct quantized on-disk weight denominator.
+1. Exact prompt texts for W2/W3/W4. Must be license-clean, English, and chosen so W2/W4 rarely
+   trigger early EOS across common instruct-tuned models.
+2. Whether 5 repetitions is sufficient for a stable CV, or whether 7–10 is needed. Determine
+   empirically on the RTX 3080 and RTX 4070 Ti.
+3. Whether `load_duration` is reliable enough after a forced unload to be worth reporting at all.
+4. Whether Ollama reliably exposes per-layer GPU/CPU assignment in a machine-readable form, or
+   whether §7's partial-offload diagnostic needs a different detection route.
+5. The `num_ctx` value for W3 — 4096 is a starting assumption, not a verified saturation point.
+6. Where quantized weight size comes from for §6.2 — runtime-reported vs. model metadata.
 
 No v1.1 change closes these hardware questions.
 
