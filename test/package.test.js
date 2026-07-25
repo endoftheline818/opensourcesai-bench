@@ -4,6 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CLIENT_VERSION } from "../src/version.js";
+import { FIXTURE_SCHEMA_VERSION } from "../src/fixture-format.js";
 import { GPU_MEMORY_BANDWIDTH_TABLE } from "../data/gpu-memory-bandwidth-v1.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -83,6 +84,12 @@ test("synthetic fixtures stay labelled and future real captures meet the fixture
     const fixture = JSON.parse(
       await readFile(path.join(root, "fixtures", name), "utf8"),
     );
+    assert.equal(fixture.schemaVersion, FIXTURE_SCHEMA_VERSION);
+    if (fixture.workloads) {
+      for (const slots of Object.values(fixture.workloads)) {
+        assert.ok(slots.every(Array.isArray));
+      }
+    }
     if (fixture.realHardware === false) {
       assert.match(fixture.fixtureType, /synthetic/);
       assert.equal(typeof fixture.warning, "string");

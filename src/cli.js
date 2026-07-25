@@ -4,10 +4,8 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import path from "node:path";
 import { OllamaAdapter } from "./adapters/ollama.js";
-import { PROTOCOL_VERSION } from "./protocol.js";
 import { QualityRefusalError, runBenchmark } from "./benchmark.js";
 import { matchGpuMemoryBandwidth } from "./derivation/gpu-bandwidth.js";
-import { renderRunEstimate } from "./output/estimate.js";
 import { renderReport } from "./output/report.js";
 import {
   renderFixtureCaptureSummary,
@@ -18,7 +16,7 @@ import { writeResult } from "./output/writer.js";
 function usage() {
   return `Usage: osai-bench [options]
 
-Runs the complete ${PROTOCOL_VERSION} protocol against Ollama on this machine.
+Runs the complete osai-bench/1.1 protocol against Ollama on this machine.
 
 Options:
   --model <name>                 Select an installed model non-interactively
@@ -145,7 +143,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   output.write(
-    `OpenSourcesAI Bench — local-only ${PROTOCOL_VERSION}\n` +
+    "OpenSourcesAI Bench — local-only osai-bench/1.1\n" +
       "No telemetry, upload, analytics, version check, or external network access.\n",
   );
   const adapter = new OllamaAdapter();
@@ -167,34 +165,17 @@ export async function main(argv = process.argv.slice(2)) {
     return 1;
   }
 
-  // Model-independent §4 conditions are checked BEFORE any prompt. They are
-  // knowable at startup, so making the user pick a model and type a bandwidth
-  // figure only to be refused for being on battery wastes two answers per
-  // attempt — a cost paid over and over across a hardware session.
-  let environment;
+  let readline = null;
   try {
-    environment = await adapter.checkEnvironmentPreconditions();
-  } catch (error) {
-    process.stderr.write(`Could not inspect this system: ${error.message}\n`);
-    return 1;
-  }
-  if (environment.issues.length > 0 && !args.qualityOverride) {
-    process.stderr.write("\nRun refused before starting because:\n");
-    for (const issue of environment.issues) {
-      process.stderr.write(`- ${issue.message}\n`);
+    const independent = await adapter.checkModelIndependentPreconditions();
+    if (independent.issues.length > 0 && !args.qualityOverride) {
+      throw new QualityRefusalError(independent.issues);
     }
-    process.stderr.write(
-      "\nResolve these conditions and retry. To preserve a knowingly non-standard run, " +
-        "rerun with --quality-override; the JSON will be permanently marked and cohort-ineligible.\n",
-    );
-    return 3;
-  }
 
-  const readline =
-    input.isTTY && (!args.model || args.memoryBandwidthGBps === null)
-      ? createInterface({ input, output })
-      : null;
-  try {
+    readline =
+      input.isTTY && (!args.model || args.memoryBandwidthGBps === null)
+        ? createInterface({ input, output })
+        : null;
     const model =
       args.model ??
       (input.isTTY
@@ -207,24 +188,21 @@ export async function main(argv = process.argv.slice(2)) {
     }
     let memoryBandwidthGBps = args.memoryBandwidthGBps;
     if (memoryBandwidthGBps === null && input.isTTY) {
-      // Reuses the snapshot already taken for the environment check rather than
-      // collecting a second one.
       const automaticMatch = matchGpuMemoryBandwidth({
-        model: environment.system.gpu.model,
-        totalVramBytes: environment.system.gpu.totalVramBytes,
+        model: independent.system.gpu.model,
+        totalVramBytes: independent.system.gpu.totalVramBytes,
       });
       if (!automaticMatch) {
         memoryBandwidthGBps = await askBandwidth(readline);
       }
     }
-    output.write(`\n${renderRunEstimate()}\n\n`);
     let fixtureCapture = null;
     const record = await runBenchmark({
       adapter,
       model,
       memoryBandwidthGBps,
       qualityOverride: args.qualityOverride,
-      environment,
+      modelIndependentPreconditions: independent,
       onProgress: (message) => output.write(`  ${message}\n`),
       onFixtureCapture: args.captureFixturePath
         ? (capture) => {

@@ -11,7 +11,7 @@ import { loadFixture } from "./helpers.js";
 
 test("final chunk and raw counters are extracted without retaining model output", async () => {
   const fixture = await loadFixture("synthetic-normal.json");
-  const response = fixture.workloads.w2[0];
+  const response = fixture.workloads.w2[0][0];
   const original = structuredClone(response.chunks);
   assert.equal(finalOllamaChunk(response.chunks).done, true);
   const measurement = extractRawMeasurement(response);

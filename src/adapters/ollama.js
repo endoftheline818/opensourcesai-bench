@@ -8,7 +8,6 @@ import { performance } from "node:perf_hooks";
 import {
   FIXED_OPTIONS,
   NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB,
-  PROTOCOL_VERSION,
 } from "../protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -34,6 +33,15 @@ function requestOptions(endpoint, method) {
     method,
     headers: { "content-type": "application/json" },
   };
+}
+
+function ollamaConnectionError(endpoint, error) {
+  const url = new URL(endpoint, OLLAMA_ORIGIN).toString();
+  return new Error(
+    `Could not reach local Ollama at ${url}: ${error.message}. ` +
+      "Start Ollama and retry.",
+    { cause: error },
+  );
 }
 
 async function requestJson(endpoint, { method = "GET", body } = {}) {
@@ -63,7 +71,9 @@ async function requestJson(endpoint, { method = "GET", body } = {}) {
     request.setTimeout(REQUEST_TIMEOUT_MS, () => {
       request.destroy(new Error(`Ollama ${endpoint} timed out`));
     });
-    request.on("error", reject);
+    request.on("error", (error) => {
+      reject(ollamaConnectionError(endpoint, error));
+    });
     if (body !== undefined) {
       request.write(JSON.stringify(body));
     }
@@ -144,7 +154,9 @@ async function requestNdjson(endpoint, body) {
       });
     });
     request.setTimeout(0);
-    request.on("error", reject);
+    request.on("error", (error) => {
+      reject(ollamaConnectionError(endpoint, error));
+    });
     request.write(JSON.stringify(body));
     dispatchAt = performance.now();
     request.end();
@@ -361,6 +373,64 @@ function isOllamaProcess(processName) {
   return /(^|[\\/])ollama(?:\.exe)?$/i.test(processName);
 }
 
+function modelIndependentIssues(system) {
+  const issues = [];
+  if (system.power.onBattery === true) {
+    issues.push({
+      code: "on-battery",
+      message: "System is running on battery power",
+    });
+  }
+  if (
+    Number.isFinite(system.gpu.utilizationPercent) &&
+    system.gpu.utilizationPercent > 10
+  ) {
+    issues.push({
+      code: "gpu-utilization",
+      message: `Pre-existing GPU utilization is ${system.gpu.utilizationPercent}% (>10%)`,
+    });
+  }
+
+  const nonOllama = system.gpuProcesses.filter(
+    (processEntry) => !isOllamaProcess(processEntry.processName),
+  );
+  const nonOllamaMiB = nonOllama.reduce(
+    (sum, processEntry) => sum + (processEntry.usedMemoryMiB || 0),
+    0,
+  );
+  if (nonOllamaMiB > NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB) {
+    issues.push({
+      code: "non-ollama-gpu-memory",
+      message:
+        `Non-Ollama compute processes use ${nonOllamaMiB} MiB GPU memory ` +
+        `(>${NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB} MiB provisional threshold)`,
+    });
+  }
+
+  if (system.gpuCount > 1) {
+    issues.push({
+      code: "multiple-gpus-unsupported",
+      message: `${system.gpuCount} GPUs detected; osai-bench/1.1 supports one discrete GPU`,
+    });
+  }
+  return issues;
+}
+
+function modelDependentIssues(runningRaw, targetModel) {
+  const issues = [];
+  const loaded = Array.isArray(runningRaw.models) ? runningRaw.models : [];
+  for (const model of loaded) {
+    const identifier = model.name ?? model.model;
+    if (identifier && identifier !== targetModel) {
+      issues.push({
+        code: "different-model-loaded",
+        message: `Ollama already has non-target model ${identifier} loaded`,
+      });
+    }
+  }
+  return issues;
+}
+
 export class OllamaAdapter {
   constructor() {
     this.name = "ollama";
@@ -460,80 +530,37 @@ export class OllamaAdapter {
     };
   }
 
-  // Model-independent half of §4. Split out so the CLI can refuse a run before
-  // asking the user anything: these conditions are knowable at startup, and
-  // reporting them only after model selection and the bandwidth prompt makes
-  // every refused run cost two answered questions first — paid repeatedly
-  // during a hardware session.
-  async checkEnvironmentPreconditions() {
+  async checkModelIndependentPreconditions() {
     const system = await this.collectSystemSnapshot();
-    const issues = [];
-
-    if (system.power.onBattery === true) {
-      issues.push({
-        code: "on-battery",
-        message: "System is running on battery power",
-      });
-    }
-    if (
-      Number.isFinite(system.gpu.utilizationPercent) &&
-      system.gpu.utilizationPercent > 10
-    ) {
-      issues.push({
-        code: "gpu-utilization",
-        message: `Pre-existing GPU utilization is ${system.gpu.utilizationPercent}% (>10%)`,
-      });
-    }
-
-    const nonOllama = system.gpuProcesses.filter(
-      (processEntry) => !isOllamaProcess(processEntry.processName),
-    );
-    const nonOllamaMiB = nonOllama.reduce(
-      (sum, processEntry) => sum + (processEntry.usedMemoryMiB || 0),
-      0,
-    );
-    if (nonOllamaMiB > NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB) {
-      issues.push({
-        code: "non-ollama-gpu-memory",
-        message:
-          `Non-Ollama compute processes use ${nonOllamaMiB} MiB GPU memory ` +
-          `(>${NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB} MiB provisional threshold)`,
-      });
-    }
-
-    if (system.gpuCount > 1) {
-      issues.push({
-        code: "multiple-gpus-unsupported",
-        message: `${system.gpuCount} GPUs detected; ${PROTOCOL_VERSION} supports one discrete GPU`,
-      });
-    }
-
-    return { issues, system };
+    return { issues: modelIndependentIssues(system), system };
   }
 
-  // Full §4 check. Accepts an already-collected environment result so the CLI's
-  // early refusal does not cost a second system snapshot.
-  async checkPreconditions(targetModel, environment = null) {
-    const [environmentResult, runningRaw] = await Promise.all([
-      environment ?? this.checkEnvironmentPreconditions(),
-      this.listRunningModels(),
+  async checkModelDependentPreconditions(targetModel) {
+    const rawRunningModels = await this.listRunningModels();
+    return {
+      issues: modelDependentIssues(rawRunningModels, targetModel),
+      rawRunningModels,
+    };
+  }
+
+  async checkPreconditions(targetModel) {
+    const [independent, dependent] = await Promise.all([
+      this.checkModelIndependentPreconditions(),
+      this.checkModelDependentPreconditions(targetModel),
     ]);
-    const system = environmentResult.system;
-    const issues = [...environmentResult.issues];
-
-    const loaded = Array.isArray(runningRaw.models) ? runningRaw.models : [];
-    for (const model of loaded) {
-      const identifier = model.name ?? model.model;
-      if (identifier && identifier !== targetModel) {
-        issues.push({
-          code: "different-model-loaded",
-          message: `Ollama already has non-target model ${identifier} loaded`,
-        });
-      }
-    }
-
-    return { issues, system, rawRunningModels: runningRaw };
+    return {
+      issues: [...independent.issues, ...dependent.issues],
+      system: independent.system,
+      rawRunningModels: dependent.rawRunningModels,
+    };
   }
 }
 
-export const __test = { assertLoopbackUrl, isOllamaProcess, parseCsvLine };
+export const __test = {
+  assertLoopbackUrl,
+  isOllamaProcess,
+  modelDependentIssues,
+  modelIndependentIssues,
+  ollamaConnectionError,
+  parseCsvLine,
+};
