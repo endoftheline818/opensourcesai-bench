@@ -105,8 +105,8 @@ test("captured fixture round-trips through the fixture loader without editing", 
   assert.equal("warning" in fixture, false);
   assert.equal(fixture.label, "rtx-4070-ti-partial-offload");
   assert.equal(fixture.capturedAt, "2026-07-25T12:00:00.000Z");
-  assert.equal(fixture.clientVersion, "0.3.0");
-  assert.equal(fixture.protocolVersion, "osai-bench/1.1");
+  assert.equal(fixture.clientVersion, "0.4.0");
+  assert.equal(fixture.protocolVersion, "osai-bench/1.2");
   assert.deepEqual(
     Object.fromEntries(
       Object.entries(fixture.workloads).map(([id, responses]) => [
@@ -195,8 +195,8 @@ test("terminal summary names captured fields, counts, redactions, and path", () 
   });
   assert.match(summary, /Saved real-hardware fixture: \/tmp\/summary-check\.json/);
   assert.match(summary, /label: summary-check/);
-  assert.match(summary, /clientVersion: 0\.3\.0/);
-  assert.match(summary, /protocolVersion: osai-bench\/1\.1/);
+  assert.match(summary, /clientVersion: 0\.4\.0/);
+  assert.match(summary, /protocolVersion: osai-bench\/1\.2/);
   assert.match(summary, /tagsResponse\.models\[0\]/);
   assert.match(summary, /showResponse\.model_info/);
   assert.match(summary, /w1=1, w2=6, w3=6, w4=6/);

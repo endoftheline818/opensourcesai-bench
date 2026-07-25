@@ -32,5 +32,14 @@ export function coefficientOfVariation(values) {
   if (average === null || average === 0) {
     return null;
   }
-  return sampleStandardDeviation(values) / average;
+  const deviation = sampleStandardDeviation(values);
+  // Explicit null guard, not incidental. `sampleStandardDeviation` returns null
+  // for fewer than two values, and `null / average` coerces to 0 in JavaScript —
+  // so a workload left with a single surviving pass previously reported 0%
+  // run-to-run variation, i.e. perfect consistency, on exactly the unstable
+  // machines this metric exists to identify.
+  if (deviation === null) {
+    return null;
+  }
+  return deviation / average;
 }

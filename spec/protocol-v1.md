@@ -1,7 +1,7 @@
-# OpenSourcesAI Bench — Measurement Protocol v1.1
+# OpenSourcesAI Bench — Measurement Protocol v1.2
 
 **Status:** DRAFT. Not frozen. Freeze at first public release (`v1.0.0`); version from there.
-**Applies to:** `@opensourcesai/bench` client, protocol identifier `osai-bench/1.1`.
+**Applies to:** `@opensourcesai/bench` client, protocol identifier `osai-bench/1.2`.
 **Companion document:** the recommendation-governance boundary lives in the site repo
 (`opensourcesai-frontend/docs/`), not here. This document constrains *measurement*;
 that one constrains *what the resulting data may influence*.
@@ -45,7 +45,9 @@ Every result record carries three independent versions:
 **Raw measurements are immutable and are the source of truth. All derived figures are
 recomputable from them.** A scoring change must never orphan history — it recomputes it.
 Records whose `protocolVersion` differs are never pooled or compared. In particular,
-`osai-bench/1` and `osai-bench/1.1` records are distinct populations and must never be pooled.
+`osai-bench/1`, `osai-bench/1.1` and `osai-bench/1.2` records are distinct populations and must
+never be pooled. 1.2 changed both the W3 prompt and the prompt-length validity rule, so its
+measurements are not comparable with earlier ones.
 
 ---
 
@@ -114,13 +116,20 @@ Four workloads, run in this order:
 minimal request. Record `load_duration`. This is the only workload that measures loading;
 all others run warm.
 
-**W2 — Short-prompt latency.** Prompt of ~32 tokens. `num_predict = 128`.
+**W2 — Short-prompt latency.** Short prompt, accepted band 20-64 tokens. `num_predict = 128`.
 Measures **time to first token** as observed wall-clock from request dispatch to first
 streamed token. This deliberately includes launch overhead, scheduling, and CPU involvement,
 because that is what a user experiences.
 
-**W3 — Long-prompt prefill.** Prompt of ~4096 tokens. `num_predict = 1`.
-Measures prefill throughput in a regime where the GPU is actually saturated.
+**W3 — Long-prompt prefill.** Long prompt, accepted band 2000 tokens to `num_ctx - 1`.
+`num_predict = 1`. Measures prefill throughput in a regime where the GPU is actually saturated.
+
+> **The prompt must fit inside `num_ctx`, with margin.** v1.1 specified "~4096 tokens" against a
+> `num_ctx` of 4096 and shipped a prompt roughly twice that size. The runtime truncated it to
+> exactly `num_ctx`, and because the validity rule compared `prompt_eval_count` against an
+> *intended* 4096, the truncated count matched the intended count and every pass validated. W3
+> reported clean measurements of a prompt it never processed in full. The prompt is now sized
+> with headroom below `num_ctx`, and §5.4 checks the count against the context window itself.
 
 > **Why two prompt lengths.** Prefill is only compute-bound once the workload is large enough
 > to saturate. Short-prompt prefill is dominated by launch overhead, CPU involvement, and
@@ -128,7 +137,7 @@ Measures prefill throughput in a regime where the GPU is actually saturated.
 > different physical regimes and will not be stable across runtimes. W2 and W3 are reported
 > separately and must never be combined.
 
-**W4 — Sustained generation.** Prompt of ~32 tokens. `num_predict = 512`.
+**W4 — Sustained generation.** Same short prompt and band as W2. `num_predict = 512`.
 Measures generation throughput, the primary bandwidth-bound metric.
 
 ### 5.3 Repetitions for variance
@@ -151,9 +160,16 @@ that measured pass and its workload are marked failed, when:
   covers fewer tokens than intended and is not comparable. **Prompts for W2 and W4 must be
   chosen to elicit long continuations** to make this rare; the check exists because it cannot
   be prevented outright.
-- `prompt_eval_count` deviates from the intended prompt length by more than 5% — tokenizer
-  differences between models are expected and are recorded, but a large deviation indicates
-  prompt truncation against `num_ctx`; or
+- `prompt_eval_count` reaches or exceeds `num_ctx` — the signature of a truncated prompt. This
+  check applies to **every** workload, including those with no band of their own. A rule that
+  only compares the count against an expected value cannot detect truncation, because when the
+  expectation happens to equal `num_ctx` the truncated count lands exactly on it;
+- `prompt_eval_count` falls outside the workload's accepted band (§5.2). The band replaces
+  v1.1's "within 5% of an intended value". A percentage tolerance is reasonable at 4096 tokens
+  (±205) and unusable at 32 (**±1.6**), where a single token of tokenizer variation between two
+  models exceeds it — which would have failed every W2 and W4 pass on most models, leaving a
+  completed run with no generation or time-to-first-token data at all. Token counts are
+  model-dependent; a band states what is acceptable instead of guessing an exact value; or
 - any duration field is zero or absent.
 
 Each W1 retry performs another forced unload before the replacement request. This preserves
@@ -402,6 +418,49 @@ No v1.1 change closes these hardware questions.
 ---
 
 ## 13. Changelog
+
+### `osai-bench/1.2` + `osai-bench-derive/1.3` — 2026-07-25 (protocol revision)
+
+Found by an independent audit of the v1.1 implementation. All four defects passed the then-green
+test suite; the fifth entry explains why.
+
+- **W3's prompt was roughly twice its own context window.** ~29,900 characters (about 7,500-8,300
+  tokens) submitted under `num_ctx: 4096`. The runtime truncated it, `prompt_eval_count` came back
+  pinned at 4096, and since the validity rule compared that against an *intended* 4096 the pass
+  validated. W3 would have reported five clean passes measuring a prompt it never processed in
+  full — and closed the open §12.5 saturation question with a confident wrong answer. The prompt
+  is now 80 repetitions (~11,960 characters), sized with headroom under `num_ctx`.
+- **Added a truncation check to §5.4**, applied to every workload: `prompt_eval_count >= num_ctx`
+  invalidates the pass. Comparing the count against the context window is the only way to catch
+  truncation; comparing it against an expected value cannot.
+- **Replaced the 5% prompt-length tolerance with an explicit band per workload.** At 32 intended
+  tokens, 5% is ±1.6 — narrower than one token of tokenizer variation, so W2 and W4 would have
+  failed every pass on most models and produced no generation or TTFT data. Bands are 20-64 tokens
+  for W2/W4 and 2000 to `num_ctx - 1` for W3.
+- **Coefficient of variation returned 0 instead of null for a single sample.** The standard
+  deviation helper correctly returns null below two values, but `null / mean` coerces to 0 in
+  JavaScript. A workload left with one surviving pass reported 0% run-to-run variation — perfect
+  consistency — on exactly the unstable machines the metric exists to identify.
+- **The test suite could not have caught any of the above.** Fixtures hardcoded
+  `prompt_eval_count: 32` and `4096` — the exact values the rules wanted — so they validated by
+  construction, and no test referenced the real prompt constants at all. The suite proved the code
+  self-consistent while the prompts it actually sends bore no relation to the counts asserted.
+  `test/prompt-sizing.test.js` now derives its expectations from the prompt constants and bounds
+  tokenization across a plausible characters-per-token range, so a prompt that only works under
+  one tokenizer assumption fails.
+
+Because measurement semantics changed — a different W3 prompt and different validity rules —
+`protocolVersion` moves to `osai-bench/1.2` and 1.1 records are **not** poolable with 1.2 records.
+`scoringVersion` moves to `osai-bench-derive/1.3` for the CV correction. Raw measurements remain
+immutable, so an existing 1.1 record can still be recomputed under the new derivation; it simply
+belongs to a different measurement population.
+
+Non-measurement changes in the same revision: model-independent run-quality preconditions are now
+checked before any interactive prompt, so a refusal for battery power or GPU contention no longer
+costs the user a model selection and a bandwidth entry first; the enforced conditions and the
+`--quality-override` escape are unchanged. The CLI also prints an estimated run duration derived
+from the scheduled pass counts before starting.
+
 
 ### `osai-bench-derive/1.2` — 2026-07-25 (derivation revision)
 

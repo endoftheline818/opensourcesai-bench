@@ -122,8 +122,13 @@ class FakeAdapter {
     if (this.failW4 && workload.id === "w4" && this.calls.w4 > 1) {
       evalCount -= 1;
     }
-    const promptCount =
-      workload.intendedPromptTokens ?? (workload.id === "w1" ? 5 : 32);
+    // Derived from the workload's own band rather than hardcoded, so this fake
+    // cannot drift away from the rules it is supposed to satisfy.
+    const promptCount = workload.promptTokenRange
+      ? Math.floor(
+          (workload.promptTokenRange.min + workload.promptTokenRange.max) / 2,
+        )
+      : 5;
     const evalDuration =
       workload.id === "w4" ? 8_000_000_000 : 1_000_000_000;
     return {
@@ -166,9 +171,9 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.rawMeasurements.workloads.w2.warmup.eval_count, 128);
   assert.equal(record.derived.passFailureRate.percent, 0);
   assert.equal(record.derived.attemptFailureRate.percent, 0);
-  assert.equal(record.protocolVersion, "osai-bench/1.1");
-  assert.equal(record.clientVersion, "0.3.0");
-  assert.equal(record.scoringVersion, "osai-bench-derive/1.2");
+  assert.equal(record.protocolVersion, "osai-bench/1.2");
+  assert.equal(record.clientVersion, "0.4.0");
+  assert.equal(record.scoringVersion, "osai-bench-derive/1.3");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });
 

@@ -182,11 +182,12 @@ export async function runBenchmark({
   model,
   memoryBandwidthGBps = null,
   qualityOverride = false,
+  environment = null,
   onProgress,
   onFixtureCapture,
 }) {
   progress(onProgress, "Checking run-quality preconditions");
-  const preconditions = await adapter.checkPreconditions(model);
+  const preconditions = await adapter.checkPreconditions(model, environment);
   if (preconditions.issues.length > 0 && !qualityOverride) {
     throw new QualityRefusalError(preconditions.issues);
   }

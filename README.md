@@ -1,8 +1,8 @@
 # @opensourcesai/bench
 
 A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.3.0`
-implements the draft `osai-bench/1.1` measurement protocol. Records produced
-under `osai-bench/1` and `osai-bench/1.1` must never be pooled.
+implements the draft `osai-bench/1.2` measurement protocol. Records produced
+under `osai-bench/1` and `osai-bench/1.2` must never be pooled.
 
 The package reports separate measurements. It does not create a composite
 score, grade, asserted target, or “well-configured” threshold.
@@ -236,7 +236,7 @@ responses this client consumes, so layer-based diagnostics report
 
 The W1/W2/W4 context values, warm `keep_alive`, and non-Ollama GPU-memory
 threshold remain provisional. v1.1 pins sample-standard-deviation CV; scoring
-revision `osai-bench-derive/1.2` reports both scheduled-pass failures and all
+revision `osai-bench-derive/1.3` reports both scheduled-pass failures and all
 failed attempts, including recovered retries.
 
 Ollama `/api/show` supplies model architecture metadata such as block count,

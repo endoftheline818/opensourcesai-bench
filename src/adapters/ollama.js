@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import {
   FIXED_OPTIONS,
   NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB,
+  PROTOCOL_VERSION,
 } from "../protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -459,11 +460,13 @@ export class OllamaAdapter {
     };
   }
 
-  async checkPreconditions(targetModel) {
-    const [system, runningRaw] = await Promise.all([
-      this.collectSystemSnapshot(),
-      this.listRunningModels(),
-    ]);
+  // Model-independent half of §4. Split out so the CLI can refuse a run before
+  // asking the user anything: these conditions are knowable at startup, and
+  // reporting them only after model selection and the bandwidth prompt makes
+  // every refused run cost two answered questions first — paid repeatedly
+  // during a hardware session.
+  async checkEnvironmentPreconditions() {
+    const system = await this.collectSystemSnapshot();
     const issues = [];
 
     if (system.power.onBattery === true) {
@@ -501,9 +504,22 @@ export class OllamaAdapter {
     if (system.gpuCount > 1) {
       issues.push({
         code: "multiple-gpus-unsupported",
-        message: `${system.gpuCount} GPUs detected; osai-bench/1.1 supports one discrete GPU`,
+        message: `${system.gpuCount} GPUs detected; ${PROTOCOL_VERSION} supports one discrete GPU`,
       });
     }
+
+    return { issues, system };
+  }
+
+  // Full §4 check. Accepts an already-collected environment result so the CLI's
+  // early refusal does not cost a second system snapshot.
+  async checkPreconditions(targetModel, environment = null) {
+    const [environmentResult, runningRaw] = await Promise.all([
+      environment ?? this.checkEnvironmentPreconditions(),
+      this.listRunningModels(),
+    ]);
+    const system = environmentResult.system;
+    const issues = [...environmentResult.issues];
 
     const loaded = Array.isArray(runningRaw.models) ? runningRaw.models : [];
     for (const model of loaded) {
