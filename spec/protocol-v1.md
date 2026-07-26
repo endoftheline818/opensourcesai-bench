@@ -387,6 +387,65 @@ Runtime version is part of the cohort key *and* must be annotated on any history
 user whose throughput improves because Ollama shipped a faster kernel — with no action on
 their part — will otherwise read it as a defect in the benchmark.
 
+### 8.4 Environment comparability
+
+Ollama's behaviour is changed by server-side environment variables that appear in no
+measurement and in no part of the §8.1 cohort key. Two machines can run the same protocol,
+the same model, the same quantization and the same context and still be measuring different
+things.
+
+This is not hypothetical. Observed 2026-07-26 across this project's own two capture
+machines — same model (llama3.1:8b Q4_K_M), same 4,096-token context:
+
+| | RTX 4070 Ti (Windows) | RTX 3080 (Linux rig) |
+|---|---|---|
+| `OLLAMA_KV_CACHE_TYPE` | `q8_0` | unset → `f16` |
+| `OLLAMA_FLASH_ATTENTION` | `true` | unset |
+| Resulting KV cache at 4,096 | 272 MiB | 512 MiB |
+
+A 2× difference in KV-cache VRAM, plus a different attention kernel — uncontrolled and
+unrecorded. **Every cross-machine comparison in this repository made before client 0.8.0
+predates this capture** and cannot be shown to have compared like with like.
+
+The client therefore records `runtime.environment`: an allowlisted declaration of the Ollama
+variables that change what is measured. Comparison consults it **before** the §8.1 ladder.
+
+**It is a declaration, not a reading.** The client can only read *its own* process
+environment. The Ollama server is a separate process — a Windows service, a systemd unit, a
+container — and may have been started with entirely different values. Ollama exposes no
+endpoint that reports its resolved configuration, so no authoritative reading is available
+over the API. Two consequences, both binding:
+
+1. Nothing in `runtime.environment` may feed a measurement, a derived metric, or a score.
+   It describes run conditions only.
+2. Matching declarations establish *presumed* comparability, never proven comparability.
+
+The gap is demonstrable on this project's own hardware. On the Linux rig the login shell
+exports no `OLLAMA_*` variables at all, while the systemd unit running the server holds
+`OLLAMA_HOST=0.0.0.0:11434` and `OLLAMA_KEEP_ALIVE=24h`. A run there declares "nothing set"
+and is wrong about the server in two respects — both advisory in this instance, but the
+mechanism applies equally to blocking variables. This is why an under-reported declaration
+must never harden into a claim of equivalence.
+
+**Comparison verdicts** (`compareRuntimeEnvironments`, `src/derivation/environment.js`):
+
+| Verdict | When | Pooling |
+|---|---|---|
+| `unknown` | either record lacks `runtime.environment` | excluded from levels 1–3 |
+| `incomparable` | a **blocking** variable differs | excluded from levels 1–3 |
+| `advisory` | only advisory variables differ | eligible; difference annotated |
+| `comparable` | declarations match | eligible |
+
+`unknown` is a real outcome and must never be rendered as `comparable`. A record produced
+before this capture existed is not evidence of a matching environment; it is an absence of
+evidence, and the two must not be collapsed.
+
+Each allowlisted variable is classified **blocking** (changes what is measured — KV cache
+type, flash attention, server context length, parallel slots, GPU overhead, scheduling
+spread, LLM library, llama.cpp memory fit) or **advisory** (may explain a discrepancy
+without invalidating it). The allowlist and its classifications live in code, with a stated
+reason per variable, so this list cannot drift from what is enforced.
+
 ---
 
 ## 9. Privacy
@@ -395,13 +454,20 @@ their part — will otherwise read it as a defect in the benchmark.
 
 CPU model · GPU model · VRAM · system RAM · OS and version · GPU driver version ·
 runtime name and version · model identifier, family, parameter count, quantization ·
-context configuration · all measurements above · all three version identifiers.
+context configuration · all measurements above · all three version identifiers ·
+the §8.4 environment declaration, **allowlist only**.
 
 ### 9.2 Never collected
 
 Local file paths or directory contents · conversation history · user prompts · model outputs ·
 hostname, username, MAC, or serial numbers · installed software inventory · any identifier
 not required to interpret a measurement.
+
+The §8.4 environment declaration is an **allowlist, never a dump** of the process
+environment: an unrecognized variable is not recorded at all. Two of the allowlisted
+variables would breach §9.2 if their values were stored — `OLLAMA_MODELS` routinely contains
+a home directory and `OLLAMA_HOST` an address — so those are recorded as a presence boolean
+and their values are never read into the record.
 
 ### 9.3 Quasi-identification
 
@@ -562,6 +628,32 @@ contention threshold, the §12.4 layer-assignment detection route).
 ---
 
 ## 13. Changelog
+
+### `clientVersion` 0.8.0 — 2026-07-26 (run-condition capture; no measurement changed)
+
+Found while re-examining §12.4. The Ollama server log on the RTX 4070 Ti box reported
+`K (q8_0)` where the RTX 3080 rig reported `K (f16)` — same model, same context, 272 MiB of
+KV cache against 512 MiB. The two machines that produced this repository's fixtures were not
+running the same Ollama configuration, and nothing in the result envelope recorded it.
+
+- **The client now records `runtime.environment`** — an allowlisted declaration of the
+  Ollama variables that change what is measured (§8.4), each classified blocking or advisory
+  with a stated reason. `compareRuntimeEnvironments` returns `comparable`, `advisory`,
+  `incomparable`, or `unknown`; the human report names any non-default setting.
+- **It is explicitly non-authoritative.** The client reads its own process environment, not
+  the server's, and Ollama exposes no endpoint reporting its resolved configuration. The
+  field is marked `authoritative: false` and is barred from feeding any measurement.
+- **Records predating this capture read `unknown`, not `comparable`.** `runtime.environment`
+  is optional in the schema so existing `osai-bench/1.3` records stay valid; a record without
+  it cannot be shown comparable to anything.
+- **No measurement, derived metric, gate, or score changed**, so the protocol and scoring
+  versions are unchanged and every existing fixture remains valid — this is a
+  collection-layer addition (§2). `clientVersion` alone moves.
+
+Not addressed here: the environment declaration cannot confirm what the server actually
+resolved. The server log does report it (`K (q8_0)`), but it is free-text llama.cpp stderr on
+an OS-specific path, not an API contract — see §12.4 for why that route stays out of the
+measurement path.
 
 ### `clientVersion` 0.7.0 — 2026-07-26 (client fix; second model family added)
 

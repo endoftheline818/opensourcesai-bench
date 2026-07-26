@@ -76,6 +76,26 @@
             }
           },
           "additionalProperties": false
+        },
+        "environment": {
+          "description": "Ollama settings declared by the CLIENT process environment, recorded for comparability only (§8). Not authoritative: the Ollama server may hold a different environment, and Ollama exposes no endpoint reporting its resolved configuration. Never an input to a measurement. Optional, so records produced before client 0.8.0 remain valid.",
+          "type": ["object", "null"],
+          "required": ["source", "authoritative", "declared", "declaredNonDefault"],
+          "properties": {
+            "source": { "const": "client-process-env" },
+            "authoritative": { "const": false },
+            "note": { "type": "string" },
+            "declared": {
+              "type": "object",
+              "description": "Allowlisted variables only. Path-like and address-like variables are recorded as presence booleans, never values (§9).",
+              "additionalProperties": { "type": ["string", "boolean", "null"] }
+            },
+            "declaredNonDefault": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
