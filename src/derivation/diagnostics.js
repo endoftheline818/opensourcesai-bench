@@ -2,9 +2,19 @@ function diagnostic(id, status, message, evidence = null) {
   return { id, status, message, evidence };
 }
 
+function percent(fraction) {
+  return `${Math.round(fraction * 100)}%`;
+}
+
 export function deriveDiagnostics({ system, model, runtime, configuration }) {
   const diagnostics = [];
   const assignment = runtime?.layerAssignment ?? null;
+  // Prefer exact layer counts if Ollama ever reports them; otherwise use the
+  // byte-granular placement /api/ps does report. Bytes answer the question
+  // these diagnostics ask -- is any of this model executing on the CPU -- even
+  // though they cannot answer it per layer.
+  const placement = runtime?.offloadPlacement ?? null;
+  const gpuPresent = Boolean(system?.gpu?.present);
 
   if (
     Number.isInteger(assignment?.cpuLayers) &&
@@ -23,12 +33,34 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
         assignment,
       ),
     );
+  } else if (!gpuPresent) {
+    diagnostics.push(
+      diagnostic(
+        "partial-cpu-offload",
+        "not-applicable",
+        "No supported discrete GPU was detected; the run is labelled CPU-only",
+      ),
+    );
+  } else if (placement) {
+    const detected =
+      placement.vramResidentBytes > 0 &&
+      placement.vramResidentBytes < placement.residentBytes;
+    diagnostics.push(
+      diagnostic(
+        "partial-cpu-offload",
+        detected ? "detected" : "not-detected",
+        detected
+          ? `${percent(1 - placement.vramResidentFraction)} of the model's resident bytes are on the host, not in VRAM`
+          : "The whole resident footprint is on one side; no split between VRAM and host memory",
+        placement,
+      ),
+    );
   } else {
     diagnostics.push(
       diagnostic(
         "partial-cpu-offload",
         "unavailable",
-        "Ollama did not expose per-layer GPU/CPU assignment in a machine-readable response",
+        "Ollama reported no resident-size figures for the model at snapshot time",
       ),
     );
   }
@@ -48,7 +80,6 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
     ),
   );
 
-  const gpuPresent = Boolean(system?.gpu?.present);
   const gpuLayers = assignment?.gpuLayers;
   if (gpuPresent && Number.isInteger(gpuLayers)) {
     const detected = gpuLayers === 0;
@@ -62,13 +93,27 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
         { gpuLayers, gpuModel: system.gpu.model ?? null },
       ),
     );
+  } else if (gpuPresent && placement) {
+    // Definitional, not inferred: zero bytes resident in VRAM is what
+    // CPU-only execution *is*. Ollama's own CLI prints "100% CPU" from this.
+    const detected = placement.vramResidentBytes === 0;
+    diagnostics.push(
+      diagnostic(
+        "cpu-only-with-gpu",
+        detected ? "detected" : "not-detected",
+        detected
+          ? "A GPU was detected but none of the model is resident in VRAM; it is executing on the CPU"
+          : `${percent(placement.vramResidentFraction)} of the model's resident bytes are in VRAM`,
+        { ...placement, gpuModel: system.gpu.model ?? null },
+      ),
+    );
   } else {
     diagnostics.push(
       diagnostic(
         "cpu-only-with-gpu",
         gpuPresent ? "unavailable" : "not-applicable",
         gpuPresent
-          ? "GPU detected, but Ollama did not report GPU-layer assignment"
+          ? "GPU detected, but Ollama reported no resident-size figures for the model"
           : "No supported discrete GPU was detected; the run is labelled CPU-only",
       ),
     );

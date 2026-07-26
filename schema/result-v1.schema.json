@@ -43,7 +43,31 @@
         "name": { "const": "ollama" },
         "version": { "type": ["string", "null"] },
         "endpoint": { "const": "loopback" },
-        "layerAssignment": { "type": ["object", "null"] },
+        "layerAssignment": {
+          "description": "Per-layer GPU/CPU assignment. Always null against Ollama, which exposes none on any released version (checked through 0.32.3). Retained as the explicit record of that absence; see offloadPlacement for what is actually observable.",
+          "type": ["object", "null"]
+        },
+        "offloadPlacement": {
+          "description": "Where the loaded model is resident, in BYTES, from /api/ps size and size_vram -- the same pair `ollama ps` uses for its PROCESSOR column. A fraction of resident footprint, not of layers and not of weights: `size` includes KV cache and compute buffers and itself moves with placement. Null when Ollama reported no resident-size figures. Optional, so records produced before client 0.9.0 remain valid.",
+          "type": ["object", "null"],
+          "required": [
+            "source",
+            "granularity",
+            "residentBytes",
+            "vramResidentBytes",
+            "hostResidentBytes",
+            "vramResidentFraction"
+          ],
+          "properties": {
+            "source": { "const": "ollama.ps.size_vram" },
+            "granularity": { "const": "bytes" },
+            "residentBytes": { "type": "number", "exclusiveMinimum": 0 },
+            "vramResidentBytes": { "type": "number", "minimum": 0 },
+            "hostResidentBytes": { "type": "number", "minimum": 0 },
+            "vramResidentFraction": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
         "kvCacheMetadata": {
           "type": "object",
           "required": [
