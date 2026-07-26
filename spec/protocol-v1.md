@@ -501,12 +501,21 @@ on that one machine and model. A second GPU has since been checked for the negat
 for items 2–4 (§11.2, RTX 3080, 2026-07-26) — a second model family is still required before the
 freeze (item 1), along with items 5 and 6.
 
-1. **Partially answered.** Exact prompt texts for W2/W3/W4, license-clean and chosen so W2/W4
-   rarely trigger early EOS. Measured on llama3.1: W2/W4 = 45 tokens, W3 = 2,650 tokens, all
-   inside their bands, and no early-EOS validity failure occurred across 32 measured passes in
-   two runs. **Still open:** a second model family, since token counts are tokenizer-specific
-   (the character-per-token ratio measured 6.73 for W3, against an estimate of 3.4–4.6 — see the
-   1.2 changelog).
+1. **Answered — a second model family confirms the prompts hold.** The W2/W3/W4 prompt texts are
+   license-clean originals, sized (§5.2) so their token counts land inside each band across
+   tokenizers. Re-measured with `scripts/diagnose-prompts.js`: llama3.1:8b gives W2/W4 = 45,
+   W3 = 2,664 (6.73 characters per token); qwen3:8b — a genuinely independent family with a
+   different tokenizer (~151k vocab against llama3.1's 128k) — gives W2/W4 = 49, W3 = 2,796
+   (6.41 chars/token). All four bands hold on both: each clears the W3 2,000-token floor with
+   >30% margin and stays >30% under `num_ctx`, so the 120-repetition sizing absorbs the
+   ~6.4–6.7 char-per-token spread these tokenizers produce on that text. A full qwen3:8b run
+   (RTX 3080, Ollama 0.30.10) completed 0/16 pass failures, so W2/W4 did not early-EOS on the
+   second family either. That run also surfaced and fixed the thinking-channel TTFT defect
+   (0.7.0 changelog): qwen3:8b's TTFT now reads 162 ms against llama3.1's 171 ms on the same GPU.
+   **Residual (strengthening, not a blocker):** a third lineage with a materially smaller
+   vocabulary — e.g. a 32k-vocab tokenizer, which tokenizes English ~40% less efficiently —
+   would stress the W3 `num_ctx` ceiling and the W2/W4 upper bound from the opposite direction,
+   and has not been run.
 2. **Answered — 5 repetitions is sufficient.** Observed CVs: generation 0.57% / 0.05%, prefill
    0.15% / 0.07%, TTFT 0.71% / 2.21% across the baseline and negative-control runs. Variance at
    that level is far below anything 7–10 repetitions would meaningfully tighten. Retain 5.
@@ -528,8 +537,10 @@ freeze (item 1), along with items 5 and 6.
    quantized weight bytes rather than total blob size needs a direct comparison against GGUF
    metadata.
 
-**Remaining before freeze:** items 5 and 6, and item 1 on a second model family. The RTX 3080
-re-run (§11.2) confirms the negative control and items 2–4 are not specific to one GPU.
+**Remaining before freeze:** items 5 and 6. Item 1's second-model-family requirement is met
+(qwen3:8b — §12.1), leaving only a small-vocabulary third tokenizer as an optional strengthening.
+The RTX 3080 re-run (§11.2) confirms the negative control and items 2–4 are not specific to one
+GPU.
 
 ---
 
