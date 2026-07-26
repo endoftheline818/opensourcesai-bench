@@ -465,13 +465,36 @@ cohort data — its intended purpose.
 As anticipated above, all three layer-assignment diagnostics reported `unavailable` in both
 runs; the gate rests on the throughput evidence.
 
+### 11.2 Result — 2026-07-26, RTX 3080, llama3.1:8b Q4_K_M, Ollama 0.30.10
+
+**PASSED.** Same `num_gpu 8` control as §11.1 (~8 of 33 layers resident), a second GPU:
+
+| Metric | Baseline | Broken | Change |
+|---|---|---|---|
+| Generation throughput | 117.03 tok/s | 8.76 tok/s | **13.4× slower** |
+| Prefill throughput | 4,503.26 tok/s | 711.21 tok/s | 6.3× slower |
+| Time to first token | 171.38 ms | 290.79 ms | 70% worse |
+| Roofline utilization | 75.77% | 5.67% | −70.1 points |
+
+Both runs completed with 0/16 pass failures and 0/16 attempt failures. The collapse is larger here
+than on the 4070 Ti (5.1×, −64 points), and in the expected direction: the 3080's higher memory
+bandwidth (760 GB/s vs. the 4070 Ti's 504 GB/s) means a larger relative penalty when layers evict
+to the same class of system DDR5 — a faster GPU has further to fall. All three layer-assignment
+diagnostics again reported `unavailable`, on a different Ollama version (0.30.10 vs. 0.32.3) and a
+different GPU vendor generation, reinforcing that this is a runtime limitation rather than a quirk
+of one card.
+
+This closes the RTX 3080 portion of §12's re-run requirement for the negative control and items
+2–4. Items 1, 5, and 6 are unrelated to which GPU is underneath and remain open regardless.
+
 ---
 
 ## 12. Open questions — resolve during hardware testing, before freeze
 
-Status after the 2026-07-25 hardware session (RTX 4070 Ti, llama3.1:8b Q4_K_M, Ollama 0.32.3).
-Every figure below is measured on that one machine and model; a second GPU and a second model
-family are still required before the freeze.
+Status after the 2026-07-25 RTX 4070 Ti hardware session. Every per-item figure below is measured
+on that one machine and model. A second GPU has since been checked for the negative control and
+for items 2–4 (§11.2, RTX 3080, 2026-07-26) — a second model family is still required before the
+freeze (item 1), along with items 5 and 6.
 
 1. **Partially answered.** Exact prompt texts for W2/W3/W4, license-clean and chosen so W2/W4
    rarely trigger early EOS. Measured on llama3.1: W2/W4 = 45 tokens, W3 = 2,650 tokens, all
@@ -500,8 +523,8 @@ family are still required before the freeze.
    quantized weight bytes rather than total blob size needs a direct comparison against GGUF
    metadata.
 
-**Remaining before freeze:** items 5 and 6, item 1 on a second model family, and the whole set
-re-run on the RTX 3080 to confirm nothing here is specific to one GPU.
+**Remaining before freeze:** items 5 and 6, and item 1 on a second model family. The RTX 3080
+re-run (§11.2) confirms the negative control and items 2–4 are not specific to one GPU.
 
 ---
 

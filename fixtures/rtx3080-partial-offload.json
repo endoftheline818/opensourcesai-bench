@@ -1,0 +1,362 @@
+{
+  "schemaVersion": "osai-bench-fixture/2",
+  "fixtureType": "ollama-runtime-responses",
+  "realHardware": true,
+  "label": "rtx3080-partial-offload",
+  "capturedAt": "2026-07-26T01:12:07.620Z",
+  "clientVersion": "0.6.0",
+  "protocolVersion": "osai-bench/1.3",
+  "redactions": {
+    "rulesApplied": [
+      "Only the selected /api/tags model is retained; other installed models are omitted.",
+      "/api/show is allowlisted; modelfile, template, license, parameters, and all other unneeded fields are omitted.",
+      "Every retry attempt is retained in order, but only its final measurement chunk is kept; model output and intermediate chunks are omitted.",
+      "Prompt and request bodies are never captured.",
+      "Path-like model identifiers are replaced with [REDACTED_LOCAL_PATH]."
+    ],
+    "pathValuesRedacted": []
+  },
+  "tagsResponse": {
+    "models": [
+      {
+        "name": "llama3.1-8b-broken:latest",
+        "model": "llama3.1-8b-broken:latest",
+        "size": 4920753340,
+        "digest": "fa8275a6a2ac93f40f23009c23c368325b3707306af2a7e1b5ee5f34a5f314aa",
+        "details": {
+          "family": "llama",
+          "parameter_size": "8.0B",
+          "quantization_level": "Q4_K_M"
+        }
+      }
+    ]
+  },
+  "showResponse": {
+    "details": {
+      "family": "llama",
+      "parameter_size": "8.0B",
+      "quantization_level": "Q4_K_M"
+    },
+    "model_info": {
+      "general.architecture": "llama",
+      "llama.block_count": 32,
+      "llama.attention.head_count": 32,
+      "llama.attention.head_count_kv": 8,
+      "llama.embedding_length": 4096
+    }
+  },
+  "workloads": {
+    "w1": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 3471543568,
+              "load_duration": 3172289508,
+              "prompt_eval_count": 15,
+              "prompt_eval_duration": 296950000,
+              "eval_count": 1,
+              "eval_duration": 1000
+            }
+          ],
+          "timeToFirstTokenMs": 3472.055182
+        }
+      ]
+    ],
+    "w2": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 18723599988,
+              "load_duration": 3908118185,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 545771000,
+              "eval_count": 128,
+              "eval_duration": 14265502000
+            }
+          ],
+          "timeToFirstTokenMs": 4460.736657000001
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 14555089313,
+              "load_duration": 173738342,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112541000,
+              "eval_count": 128,
+              "eval_duration": 14256165000
+            }
+          ],
+          "timeToFirstTokenMs": 299.98074700000143
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 14541975312,
+              "load_duration": 163775388,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112604000,
+              "eval_count": 128,
+              "eval_duration": 14253998000
+            }
+          ],
+          "timeToFirstTokenMs": 288.7522639999952
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 14542622691,
+              "load_duration": 176125281,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112107000,
+              "eval_count": 128,
+              "eval_duration": 14252660000
+            }
+          ],
+          "timeToFirstTokenMs": 290.79311900000175
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 14556474275,
+              "load_duration": 188241294,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112583000,
+              "eval_count": 128,
+              "eval_duration": 14253855000
+            }
+          ],
+          "timeToFirstTokenMs": 303.42371000000276
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 14536207189,
+              "load_duration": 170574843,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112281000,
+              "eval_count": 128,
+              "eval_duration": 14251662000
+            }
+          ],
+          "timeToFirstTokenMs": 285.4221649999963
+        }
+      ]
+    ],
+    "w3": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 3908976204,
+              "load_duration": 150754709,
+              "prompt_eval_count": 2664,
+              "prompt_eval_duration": 3749659000,
+              "eval_count": 1,
+              "eval_duration": 1000
+            }
+          ],
+          "timeToFirstTokenMs": 3909.3971949999977
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 4049597138,
+              "load_duration": 158364817,
+              "prompt_eval_count": 2664,
+              "prompt_eval_duration": 3745731000,
+              "eval_count": 1,
+              "eval_duration": 1000
+            }
+          ],
+          "timeToFirstTokenMs": 4049.8561599999957
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 4038043960,
+              "load_duration": 142298794,
+              "prompt_eval_count": 2664,
+              "prompt_eval_duration": 3747609000,
+              "eval_count": 1,
+              "eval_duration": 1000
+            }
+          ],
+          "timeToFirstTokenMs": 4038.380600999997
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 4060048931,
+              "load_duration": 172903449,
+              "prompt_eval_count": 2664,
+              "prompt_eval_duration": 3742248000,
+              "eval_count": 1,
+              "eval_duration": 1000
+            }
+          ],
+          "timeToFirstTokenMs": 4060.3137229999993
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 4055308986,
+              "load_duration": 169670676,
+              "prompt_eval_count": 2664,
+              "prompt_eval_duration": 3741077000,
+              "eval_count": 1,
+              "eval_duration": 1000
+            }
+          ],
+          "timeToFirstTokenMs": 4055.704853999996
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 4072591629,
+              "load_duration": 169378445,
+              "prompt_eval_count": 2664,
+              "prompt_eval_duration": 3747662000,
+              "eval_count": 1,
+              "eval_duration": 1000
+            }
+          ],
+          "timeToFirstTokenMs": 4073.010771999994
+        }
+      ]
+    ],
+    "w4": [
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 58865648406,
+              "load_duration": 160721016,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112191000,
+              "eval_count": 512,
+              "eval_duration": 58448107000
+            }
+          ],
+          "timeToFirstTokenMs": 418.4455409999937
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 58701635709,
+              "load_duration": 173591053,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112425000,
+              "eval_count": 512,
+              "eval_duration": 58381088000
+            }
+          ],
+          "timeToFirstTokenMs": 321.37257999999565
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 58680558243,
+              "load_duration": 157439313,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112815000,
+              "eval_count": 512,
+              "eval_duration": 58408748000
+            }
+          ],
+          "timeToFirstTokenMs": 272.4511519999942
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 58704741830,
+              "load_duration": 147386138,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112817000,
+              "eval_count": 512,
+              "eval_duration": 58442782000
+            }
+          ],
+          "timeToFirstTokenMs": 262.81371199997375
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 58692683915,
+              "load_duration": 148435961,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 112770000,
+              "eval_count": 512,
+              "eval_duration": 58429950000
+            }
+          ],
+          "timeToFirstTokenMs": 263.72063000005437
+        }
+      ],
+      [
+        {
+          "chunks": [
+            {
+              "done": true,
+              "total_duration": 58739839485,
+              "load_duration": 162025680,
+              "prompt_eval_count": 45,
+              "prompt_eval_duration": 113463000,
+              "eval_count": 512,
+              "eval_duration": 58462569000
+            }
+          ],
+          "timeToFirstTokenMs": 278.18472499999916
+        }
+      ]
+    ]
+  }
+}
