@@ -4,7 +4,11 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { runBenchmark } from "../src/benchmark.js";
-import { extractRawMeasurement } from "../src/derivation/ollama.js";
+import {
+  extractOffloadPlacement,
+  extractRawMeasurement,
+} from "../src/derivation/ollama.js";
+import { deriveDiagnostics } from "../src/derivation/diagnostics.js";
 import { FIXTURE_SCHEMA_VERSION } from "../src/fixture-format.js";
 import { CLIENT_VERSION } from "../src/version.js";
 import {
@@ -95,6 +99,17 @@ function captureSource(model = "fixture-model:8b-q4") {
         gpu_layers: 26,
         cpu_layers: 7,
       },
+    },
+    // Byte figures are the real readings captured from a forced num_gpu 10
+    // partial offload (§7.2's verification table), not invented values.
+    psResponse: {
+      name: model,
+      model,
+      size: 5_357_646_640,
+      size_vram: 1_850_893_925,
+      digest: "sha256:real-capture",
+      expires_at: "2026-07-25T00:05:00Z",
+      details: { family: "llama", parameter_size: "8B" },
     },
     workloads: {
       w1: [[response(1)]],
@@ -220,8 +235,12 @@ test("path-like model identifiers are redacted and recorded in the fixture", () 
     fixture.tagsResponse.models[0].name,
     "[REDACTED_LOCAL_PATH]",
   );
+  // psResponse carries the model identifier too, so a path-like name must be
+  // redacted there as well, and both occurrences recorded.
+  assert.equal(fixture.psResponse.name, "[REDACTED_LOCAL_PATH]");
   assert.deepEqual(fixture.redactions.pathValuesRedacted, [
     "tagsResponse.models[0].name",
+    "psResponse.name",
   ]);
   assert.throws(
     () =>
@@ -266,4 +285,70 @@ test("fixture loader rejects the old single-response format clearly", async () =
     () => loadFixture(outputPath),
     /Unsupported fixture schemaVersion \(missing\).*must be migrated or recaptured/,
   );
+});
+
+test("psResponse is captured and allowlisted to the placement figures", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "osai-fixture-ps-"));
+  const outputPath = path.join(directory, "ps.json");
+  const { fixture } = await writeFixtureCapture(captureSource(), {
+    requestedPath: outputPath,
+    label: "ps-capture",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+
+  assert.deepEqual(fixture.psResponse, {
+    size: 5_357_646_640,
+    size_vram: 1_850_893_925,
+    name: "fixture-model:8b-q4",
+  });
+  // expires_at is wall-clock state that would make fixtures non-deterministic;
+  // digest and details are already captured under tagsResponse.
+  for (const omitted of ["expires_at", "digest", "details", "model"]) {
+    assert.equal(omitted in fixture.psResponse, false, `${omitted} must be omitted`);
+  }
+});
+
+test("a captured fixture can replay the placement diagnostic", async () => {
+  // The point of the whole psResponse capture: §11's restored gate requires a
+  // negative control to fire the diagnostic for the fault it introduces, and
+  // before this a fixture could only ever demonstrate the throughput half.
+  const directory = await mkdtemp(path.join(os.tmpdir(), "osai-fixture-replay-"));
+  const { fixture } = await writeFixtureCapture(captureSource(), {
+    requestedPath: path.join(directory, "replay.json"),
+    label: "replay-check",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+
+  const placement = extractOffloadPlacement(fixture.psResponse);
+  assert.ok(placement, "placement must derive from the captured psResponse alone");
+
+  const diagnostics = deriveDiagnostics({
+    system: { gpu: { present: true } },
+    runtime: { layerAssignment: null, offloadPlacement: placement },
+    model: {},
+    configuration: {},
+  });
+  const partial = diagnostics.find((d) => d.id === "partial-cpu-offload");
+  assert.equal(
+    partial.status,
+    "detected",
+    "a fixture captured under partial offload must replay as detected",
+  );
+});
+
+test("a fixture with no psResponse still loads, and reports placement unavailable", async () => {
+  // Every fixture captured before client 0.10.0 has no psResponse. They stay
+  // valid; the diagnostic degrades to unavailable rather than the loader
+  // rejecting them.
+  const directory = await mkdtemp(path.join(os.tmpdir(), "osai-fixture-nops-"));
+  const source = captureSource();
+  delete source.psResponse;
+  const { fixture } = await writeFixtureCapture(source, {
+    requestedPath: path.join(directory, "nops.json"),
+    label: "no-ps",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+
+  assert.equal("psResponse" in fixture, false);
+  assert.equal(extractOffloadPlacement(fixture.psResponse), null);
 });
