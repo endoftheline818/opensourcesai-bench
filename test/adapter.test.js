@@ -17,6 +17,30 @@ test("Ollama process detection handles Windows and Linux paths", () => {
   assert.equal(__test.isOllamaProcess("/usr/bin/python"), false);
 });
 
+test("Ollama's own runner process is recognized, not counted as foreign contention", () => {
+  // Exact string observed on the RTX 3080 hardware session: nvidia-smi
+  // --query-compute-apps reported this as 5288 MiB of "non-Ollama compute",
+  // refusing every run once the model was warm -- deterministically, since
+  // keep_alive keeps this process resident, not a one-off precondition blip.
+  assert.equal(
+    __test.isOllamaProcess("/usr/local/lib/ollama/llama-server"),
+    true,
+  );
+});
+
+test("a standalone llama.cpp server with no ollama path segment still counts as contention", () => {
+  // Same basename, unrelated install. The check's actual purpose is excluding
+  // Ollama's own compute, not exempting every process named llama-server.
+  assert.equal(
+    __test.isOllamaProcess("/home/user/llama.cpp/build/bin/llama-server"),
+    false,
+  );
+  assert.equal(
+    __test.isOllamaProcess("C:\\llama.cpp\\llama-server.exe"),
+    false,
+  );
+});
+
 test("model-independent preconditions include startup-known conditions", () => {
   const issues = __test.modelIndependentIssues({
     power: { onBattery: true },

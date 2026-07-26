@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import {
   FIXED_OPTIONS,
   NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB,
+  PROTOCOL_VERSION,
 } from "../protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -185,6 +186,41 @@ function parseCsvLine(line) {
   return line.split(",").map((value) => value.trim());
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function median(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+// nvidia-smi's utilization.gpu is "percent of the last sample period during
+// which a kernel was executing" — a rolling, bursty figure, not a stable
+// state. Ordinary desktop apps (browser tabs, Electron/CEF apps, the NVIDIA
+// overlay itself) redraw periodically and can register a brief spike well
+// above the §4 contention threshold even when nothing is actually competing
+// for the GPU. Observed directly: one nvidia-smi call read 25% and refused a
+// run; a manual nvidia-smi call moments later, with nothing closed, read 0%.
+// A short burst of samples plus the median means a single transient blip
+// cannot trigger a refusal on an otherwise idle machine, while sustained
+// contention — a real competing workload — still shows up across all of them.
+const GPU_UTILIZATION_SAMPLES = 3;
+const GPU_UTILIZATION_SAMPLE_INTERVAL_MS = 200;
+
+async function sampleGpuUtilization() {
+  const result = await execSafe("nvidia-smi", [
+    "--query-gpu=utilization.gpu",
+    "--format=csv,noheader,nounits",
+  ]);
+  if (!result.ok || !result.stdout) return null;
+  return result.stdout.split(/\r?\n/).map((line) => Number(line.trim()));
+}
+
 async function queryNvidia() {
   const gpuQuery = await execSafe("nvidia-smi", [
     "--query-gpu=name,memory.total,memory.free,utilization.gpu,driver_version",
@@ -204,6 +240,19 @@ async function queryNvidia() {
       utilizationPercent: Number(utilizationPercent),
       driverVersion,
     };
+  });
+
+  const utilizationSamples = [gpus.map((gpu) => gpu.utilizationPercent)];
+  for (let sample = 1; sample < GPU_UTILIZATION_SAMPLES; sample += 1) {
+    await sleep(GPU_UTILIZATION_SAMPLE_INTERVAL_MS);
+    const reading = await sampleGpuUtilization();
+    if (reading) utilizationSamples.push(reading);
+  }
+  gpus.forEach((gpu, index) => {
+    const values = utilizationSamples
+      .map((sample) => sample[index])
+      .filter((value) => Number.isFinite(value));
+    if (values.length > 0) gpu.utilizationPercent = median(values);
   });
 
   const processQuery = await execSafe("nvidia-smi", [
@@ -370,7 +419,22 @@ async function queryOsVersion() {
 }
 
 function isOllamaProcess(processName) {
-  return /(^|[\\/])ollama(?:\.exe)?$/i.test(processName);
+  if (/(^|[\\/])ollama(?:\.exe)?$/i.test(processName)) return true;
+  // Ollama's actual GPU compute runs in a separately named runner process, not
+  // the `ollama` binary itself — observed directly on the RTX 3080 hardware
+  // session: /usr/local/lib/ollama/llama-server, resident and warm from an
+  // earlier call (keep_alive keeps it loaded), reported by nvidia-smi as
+  // "non-Ollama compute" and refusing every subsequent run deterministically,
+  // not as a one-off. Recognized only when "llama-server" sits inside an
+  // "ollama" path segment, so an unrelated standalone llama.cpp server a user
+  // runs themselves — same binary name, no "ollama" in its path — is still
+  // correctly counted as real contention.
+  //
+  // Windows equivalent unconfirmed: this session's Windows runs never hit the
+  // refusal, so either its runner is reported differently by nvidia-smi or
+  // this basename doesn't apply there. Add a Windows-specific pattern only
+  // once a real path is observed -- do not guess one.
+  return /[\\/]ollama[\\/].*llama-server(?:\.exe)?$/i.test(processName);
 }
 
 function modelIndependentIssues(system) {
@@ -410,7 +474,7 @@ function modelIndependentIssues(system) {
   if (system.gpuCount > 1) {
     issues.push({
       code: "multiple-gpus-unsupported",
-      message: `${system.gpuCount} GPUs detected; osai-bench/1.1 supports one discrete GPU`,
+      message: `${system.gpuCount} GPUs detected; ${PROTOCOL_VERSION} supports one discrete GPU`,
     });
   }
   return issues;

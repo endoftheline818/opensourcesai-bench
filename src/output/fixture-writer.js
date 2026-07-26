@@ -227,6 +227,9 @@ export async function writeFixtureCapture(
   }
   const fixture = buildFixtureCapture({ ...capture, label, capturedAt });
   const outputPath = path.resolve(requestedPath);
+  // Same reasoning as the result writer: never lose a capture to a missing
+  // parent directory. The wx flag still prevents overwriting.
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, `${JSON.stringify(fixture, null, 2)}\n`, {
     encoding: "utf8",
     flag: "wx",

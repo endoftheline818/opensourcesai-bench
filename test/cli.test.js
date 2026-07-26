@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __test } from "../src/cli.js";
+import { __test, resolveInstalledModel } from "../src/cli.js";
 
 test("CLI parses non-interactive protocol arguments", () => {
   assert.deepEqual(
@@ -59,4 +59,37 @@ test("help states the local-only network boundary", () => {
   assert.match(help, /127\.0\.0\.1:11434/);
   assert.match(help, /--capture-fixture <path>/);
   assert.match(help, /--fixture-label <text>/);
+});
+
+test("a bare model name resolves to the :latest tag Ollama actually created", () => {
+  // `ollama create llama3.1-8b-broken` produces `llama3.1-8b-broken:latest`,
+  // and /api/tags reports the tagged form. Rejecting the bare name the user
+  // typed reads as the tool being broken, since `ollama list` shows it.
+  const models = [
+    { name: "llama3.1:8b" },
+    { name: "llama3.1-8b-broken:latest" },
+  ];
+  assert.equal(
+    resolveInstalledModel(models, "llama3.1-8b-broken"),
+    "llama3.1-8b-broken:latest",
+  );
+  assert.equal(
+    resolveInstalledModel(models, "llama3.1-8b-broken:latest"),
+    "llama3.1-8b-broken:latest",
+  );
+  assert.equal(resolveInstalledModel(models, "llama3.1:8b"), "llama3.1:8b");
+});
+
+test("an explicit tag never silently falls back to a different one", () => {
+  // Model identity is part of the cohort key: resolving a requested :q4 to an
+  // installed :q8 would silently pool measurements of two different models.
+  const models = [{ name: "llama3.1:8b" }, { name: "mistral:latest" }];
+  assert.equal(resolveInstalledModel(models, "llama3.1:70b"), null);
+  assert.equal(resolveInstalledModel(models, "mistral:7b"), null);
+  assert.equal(resolveInstalledModel(models, "nonexistent"), null);
+});
+
+test("model entries reported only as `model` rather than `name` still resolve", () => {
+  const models = [{ model: "qwen2.5:7b" }];
+  assert.equal(resolveInstalledModel(models, "qwen2.5:7b"), "qwen2.5:7b");
 });

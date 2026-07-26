@@ -30,7 +30,7 @@ test("writer creates JSON exclusively and preserves privacy boundary", async () 
     if (key) keys.push(key);
     return value;
   });
-  assert.equal(written.protocolVersion, "osai-bench/1.2");
+  assert.equal(written.protocolVersion, "osai-bench/1.3");
   assert.equal(text.includes("synthetic token"), false);
   assert.equal(keys.includes("prompt"), false);
   assert.equal(text.includes("hostname"), false);

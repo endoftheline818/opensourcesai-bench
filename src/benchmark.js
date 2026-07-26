@@ -1,4 +1,5 @@
 import {
+  buildCallPrompt,
   FIXED_OPTIONS,
   MAX_RETRIES,
   PROTOCOL_VERSION,
@@ -113,9 +114,29 @@ function publicQualityConditions(issues) {
   }));
 }
 
-async function collectAttempt(adapter, workload) {
-  const raw = await adapter.generate(workload.model, workload);
+// Applies buildCallPrompt (protocol.js) to build the exact per-call workload
+// sent to the adapter. See the comment on WORKLOADS.w3.varyPromptPerCall for
+// why this exists — kept as a thin wrapper here so collectAttempt and the
+// warmup call share one construction path.
+function callWorkload(workload, callIndex) {
+  const prompt = buildCallPrompt(workload, callIndex);
+  return prompt === workload.prompt ? workload : { ...workload, prompt };
+}
+
+function createCallCounter() {
+  let next = 0;
+  return () => next++;
+}
+
+async function collectAttempt(adapter, workload, callIndex) {
+  const raw = await adapter.generate(
+    workload.model,
+    callWorkload(workload, callIndex),
+  );
   const measurement = extractRawMeasurement(raw);
+  // Validated against the ORIGINAL workload, not the per-call variant: the
+  // configured promptTokenRange and numCtx are unaffected by the marker,
+  // which adds only a handful of tokens against several hundred of headroom.
   const validity = validatePass(measurement, workload);
   return { raw, measurement, validity };
 }
@@ -126,6 +147,7 @@ async function measuredPass(
   passIndex,
   onProgress,
   captureResponses,
+  nextCallIndex,
 ) {
   const attempts = [];
   const capturedAttempts = captureResponses ? [] : null;
@@ -135,7 +157,7 @@ async function measuredPass(
       `${workload.name}: measured pass ${passIndex}/${workload.repetitions}` +
         (retry > 0 ? `, retry ${retry}/${MAX_RETRIES}` : ""),
     );
-    const attempt = await collectAttempt(adapter, workload);
+    const attempt = await collectAttempt(adapter, workload, nextCallIndex());
     capturedAttempts?.push(attempt.raw);
     attempts.push({
       measurement: attempt.measurement,
@@ -173,8 +195,12 @@ async function runRepeatedWorkload(
   captureResponses,
 ) {
   const workload = { ...definition, model };
+  const nextCallIndex = createCallCounter();
   progress(onProgress, `${workload.name}: warmup (discarded)`);
-  const warmupRaw = await adapter.generate(model, workload);
+  const warmupRaw = await adapter.generate(
+    model,
+    callWorkload(workload, nextCallIndex()),
+  );
   captureResponses?.push([warmupRaw]);
   const warmup = extractRawMeasurement(warmupRaw);
   const measuredPasses = [];
@@ -186,6 +212,7 @@ async function runRepeatedWorkload(
         index,
         onProgress,
         captureResponses,
+        nextCallIndex,
       ),
     );
   }
@@ -214,7 +241,9 @@ async function runColdLoad(
       "Cold load: measured pass 1/1" +
         (retry > 0 ? `, retry ${retry}/${MAX_RETRIES}` : ""),
     );
-    const attempt = await collectAttempt(adapter, workload);
+    // W1 never sets varyPromptPerCall, so callWorkload leaves it inert
+    // regardless of the index passed — 0 is arbitrary and unused.
+    const attempt = await collectAttempt(adapter, workload, 0);
     capturedAttempts?.push(attempt.raw);
     attempts.push({
       measurement: attempt.measurement,
@@ -348,6 +377,7 @@ export async function runBenchmark({
             promptTokenRange: workload.promptTokenRange,
             warmups: workload.warmups,
             repetitions: workload.repetitions,
+            varyPromptPerCall: workload.varyPromptPerCall ?? false,
           },
         ]),
       ),

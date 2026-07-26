@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = "osai-bench/1.2";
+export const PROTOCOL_VERSION = "osai-bench/1.3";
 export const SCORING_VERSION = "osai-bench-derive/1.3";
 
 export const REPETITIONS = 5;
@@ -20,22 +20,32 @@ export const SHORT_PROMPT =
 const LONG_PROMPT_SENTENCE =
   "Local inference benchmarks compare repeatable workloads while preserving measured runtime counters and configuration details for later analysis.";
 
-// Sized to sit clearly BELOW w3's num_ctx.
+// Sized from MEASURED token counts, not estimated ones.
 //
-// An earlier revision used 200 repetitions — ~29,900 characters, roughly
-// 7,500-8,300 tokens — against a num_ctx of 4,096. Ollama truncated the prompt
-// to exactly num_ctx, and because the old rule compared prompt_eval_count to an
-// *intended* 4,096, the truncated count matched the intended count and the
-// check passed. W3 reported five valid passes while measuring a silently
-// truncated prompt, which would have produced a confident and wrong answer to
-// the open §12.5 saturation question.
+// History, because both errors are instructive. v1.1 used 200 repetitions
+// (~29,900 characters) against a num_ctx of 4,096; the runtime truncated it to
+// exactly num_ctx, and because the validity rule compared prompt_eval_count
+// against an *intended* 4,096, the truncated count matched and every pass
+// validated. W3 reported clean measurements of a prompt it never processed in
+// full. The correction dropped to 80 repetitions using a character-based
+// estimate of 3.4-4.6 characters per token.
 //
-// 80 repetitions is ~11,960 characters: roughly 2,650-3,420 tokens across
-// plausible tokenizers, leaving headroom under 4,096 at both ends of that
-// estimate. The band is wide because token counts are model-dependent — which
-// is exactly why validity now checks a range plus an explicit truncation
-// signature instead of proximity to a guessed exact value.
-export const LONG_PROMPT_REPETITIONS = 80;
+// That estimate was wrong in the other direction. Measured against
+// llama3.1:8b, 80 repetitions is 11,910 characters and 1,770 tokens — 6.73
+// characters per token, roughly 50% more efficient than assumed, because this
+// sentence is built from long words that each tokenize to a single token. W3
+// then fell below its 2,000-token saturation floor and failed all five passes.
+//
+// 120 repetitions is ~17,891 characters, ~2,659 tokens on that tokenizer.
+// Chosen so the count clears the 2,000 floor even on a tokenizer 25% MORE
+// efficient than measured, and stays under num_ctx with >10% headroom even on
+// one 25% LESS efficient — both directions, because the two failures above were
+// one of each.
+//
+// The lesson worth keeping: character-based token estimation carries about a
+// 2x spread and is unusable for sizing near a boundary. Re-measure with
+// scripts/diagnose-prompts.js after any prompt change rather than re-deriving.
+export const LONG_PROMPT_REPETITIONS = 120;
 
 export const LONG_PROMPT = Array.from(
   { length: LONG_PROMPT_REPETITIONS },
@@ -92,6 +102,33 @@ export const WORKLOADS = Object.freeze({
     keepAlive: "5m",
     warmups: WARMUP_PASSES,
     repetitions: REPETITIONS,
+    // Discovered on the first real hardware run (protocol 1.2, RTX 4070 Ti,
+    // llama3.1:8b): sending the identical prompt on every warmup + measured
+    // pass let Ollama's runner reuse the previous call's KV state for the
+    // shared prefix. prompt_eval_count still reported ~2,650, but
+    // prompt_eval_duration collapsed to ~13ms on every one of the five
+    // measured passes — not a few outliers, all of them — producing a
+    // reported prefill throughput of ~208,000 tok/s. That is a cache lookup,
+    // not a measurement; §12.5 remains unanswered by that run.
+    //
+    // The fix is a short deterministic marker, unique per call (warmup and
+    // every attempt including retries), prepended to the base prompt in
+    // benchmark.js. This guarantees the prefix diverges from token 0 on every
+    // request regardless of Ollama's internal caching implementation, without
+    // depending on an undocumented no-cache flag. keep_alive: 0 was
+    // considered and rejected: it does defeat the cache, but only by forcing
+    // a full model reload — exactly what W1 already does deliberately, and
+    // §5.2 is explicit that W1 is the only workload that measures loading.
+    // Applying it to W3 would fold multi-second reload time into every
+    // prefill pass, replacing one contamination with a worse one.
+    //
+    // Scoped to W3 only. W1 is already unaffected (forces an unload before
+    // every attempt). W4's generation throughput is unaffected (decode reads
+    // through the KV cache regardless of how the prompt entered it). W2's
+    // TTFT is dominated by launch overhead per §5.2's own design, so a cache
+    // hit on its ~45-token prompt would shave a negligible amount off an
+    // already-small prefill component.
+    varyPromptPerCall: true,
   }),
   w4: Object.freeze({
     id: "w4",
@@ -112,6 +149,19 @@ export const FIXED_OPTIONS = Object.freeze({
   temperature: 0,
   seed: 42,
 });
+
+// The exact prompt text sent for a given call. Lives here, beside WORKLOADS,
+// rather than in the execution layer (benchmark.js) or a standalone script
+// (scripts/diagnose-prompts.js), so both share one definition and cannot drift
+// apart on what actually gets sent to the runtime — see §5.2.1.
+//
+// Pure function of (workload.id, callIndex): the exact text for any call is
+// reconstructible from the protocol version and the call sequence alone, so no
+// raw-record schema change is needed to keep this reproducible.
+export function buildCallPrompt(workload, callIndex) {
+  if (!workload.varyPromptPerCall) return workload.prompt;
+  return `[osai-bench cache-bust ${workload.id}#${callIndex}] ${workload.prompt}`;
+}
 
 export const ROOFLINE_LIMITS = Object.freeze([
   "Applies to generation only. Prefill is compute-bound at scale and has no bandwidth denominator.",

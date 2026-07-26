@@ -5,6 +5,7 @@ import {
   QualityRefusalError,
   runBenchmark,
 } from "../src/benchmark.js";
+import { WORKLOADS } from "../src/protocol.js";
 
 function systemSnapshot() {
   return {
@@ -116,6 +117,9 @@ class FakeAdapter {
 
   async generate(_model, workload) {
     this.calls[workload.id] += 1;
+    (this.seenPrompts ??= { w1: [], w2: [], w3: [], w4: [] })[
+      workload.id
+    ].push(workload.prompt);
     let evalCount = workload.numPredict;
     if (this.retryW2 && workload.id === "w2" && this.calls.w2 === 2) {
       evalCount -= 1;
@@ -171,10 +175,55 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.rawMeasurements.workloads.w2.warmup.eval_count, 128);
   assert.equal(record.derived.passFailureRate.percent, 0);
   assert.equal(record.derived.attemptFailureRate.percent, 0);
-  assert.equal(record.protocolVersion, "osai-bench/1.2");
-  assert.equal(record.clientVersion, "0.5.0");
+  assert.equal(record.protocolVersion, "osai-bench/1.3");
+  assert.equal(record.clientVersion, "0.6.0");
   assert.equal(record.scoringVersion, "osai-bench-derive/1.3");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
+});
+
+// Regression coverage for the first real-hardware finding: sending W3's
+// identical prompt on every warmup + measured pass let Ollama's runner reuse
+// the previous call's KV state for the shared prefix. prompt_eval_count still
+// reported ~2,650 but prompt_eval_duration collapsed to ~13ms on every one of
+// the five measured passes, producing a reported prefill throughput of
+// ~208,000 tok/s — a cache lookup, not a measurement. See the comment on
+// WORKLOADS.w3.varyPromptPerCall in protocol.js for the full account.
+test("W3's prompt is unique on every call, including retries, to defeat prefix-cache reuse", async () => {
+  const adapter = new FakeAdapter({ retryW2: true });
+  await runBenchmark({ adapter, model: "fixture:8b" });
+  const seen = adapter.seenPrompts.w3;
+  // warmup + 5 measured passes, no W3 retries configured in this scenario.
+  assert.equal(seen.length, 6);
+  assert.equal(
+    new Set(seen).size,
+    seen.length,
+    "every W3 call must send a distinct prompt, or the runtime can reuse the previous call's KV state for the shared prefix",
+  );
+  for (const prompt of seen) {
+    assert.ok(
+      prompt.endsWith(WORKLOADS.w3.prompt),
+      "the base prompt content must be preserved verbatim; only a prefix marker may vary",
+    );
+    assert.notEqual(
+      prompt,
+      WORKLOADS.w3.prompt,
+      "every W3 call must differ from the bare configured prompt",
+    );
+  }
+});
+
+test("only W3 varies its prompt; W1, W2, and W4 send the exact configured prompt on every call", async () => {
+  const adapter = new FakeAdapter({ retryW2: true, retryW1: true });
+  await runBenchmark({ adapter, model: "fixture:8b" });
+  for (const id of ["w1", "w2", "w4"]) {
+    const seen = adapter.seenPrompts[id];
+    assert.ok(seen.length > 0);
+    assert.ok(
+      seen.every((prompt) => prompt === WORKLOADS[id].prompt),
+      `${id} must send the exact configured prompt on every call, including retries — ` +
+        "it is not affected by the W3 caching defect and must not be changed incidentally",
+    );
+  }
 });
 
 test("fixture capture side channel preserves ordered attempts per scheduled slot", async () => {
