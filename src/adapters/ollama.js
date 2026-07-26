@@ -527,6 +527,14 @@ export class OllamaAdapter {
     return requestJson("/api/ps");
   }
 
+  // I/O only: hand the raw process environment to the derivation layer, which
+  // owns the allowlist. This is the CLIENT's environment, not the Ollama
+  // server's -- see src/derivation/environment.js for why that distinction
+  // matters and why nothing derived from it may feed a measurement.
+  readEnvironment() {
+    return { ...process.env };
+  }
+
   async generate(model, workload) {
     return requestNdjson("/api/generate", {
       model,

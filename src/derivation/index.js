@@ -17,3 +17,9 @@ export {
   matchGpuMemoryBandwidth,
   resolveGpuMemoryBandwidth,
 } from "./gpu-bandwidth.js";
+export {
+  compareRuntimeEnvironments,
+  deriveRuntimeEnvironment,
+  ENVIRONMENT_DECLARATION_SOURCE,
+  OLLAMA_ENVIRONMENT_VARIABLES,
+} from "./environment.js";

@@ -127,8 +127,9 @@ export async function normalRecord(
 }
 
 export class FixtureAdapter {
-  constructor(fixture, { system = null } = {}) {
+  constructor(fixture, { system = null, environment = null } = {}) {
     this.fixture = validateFixtureFormat(structuredClone(fixture));
+    this.environment = environment;
     this.system = system ?? {
       cpu: { model: "Synthetic CPU" },
       gpu: {
@@ -165,6 +166,10 @@ export class FixtureAdapter {
 
   async listRunningModels() {
     return { models: [] };
+  }
+
+  readEnvironment() {
+    return { ...(this.environment ?? {}) };
   }
 
   async forceUnload() {

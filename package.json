@@ -1,6 +1,6 @@
 {
   "name": "@opensourcesai/bench",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "A local-only Ollama inference benchmark implementing the osai-bench measurement protocol.",
   "type": "module",
   "bin": {

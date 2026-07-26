@@ -59,6 +59,24 @@ export function renderReport(record) {
     );
   }
 
+  lines.push("", "Runtime environment (declared, not authoritative):");
+  const environment = record.runtime.environment ?? null;
+  if (!environment) {
+    lines.push(
+      "- not recorded (client predates environment capture); this run cannot be shown comparable to any other",
+    );
+  } else if (environment.declaredNonDefault.length === 0) {
+    lines.push("- no Ollama tuning variables set in the client environment");
+  } else {
+    for (const name of environment.declaredNonDefault) {
+      const value = environment.declared[name];
+      lines.push(`- ${name}=${value === true ? "(set)" : value}`);
+    }
+    lines.push(
+      "- these change what is measured; only compare against runs declaring the same values",
+    );
+  }
+
   lines.push(
     "",
     "Configuration:",

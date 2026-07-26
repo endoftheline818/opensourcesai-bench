@@ -17,6 +17,7 @@ import {
   extractResolvedConfiguration,
 } from "./derivation/ollama.js";
 import { resolveGpuMemoryBandwidth } from "./derivation/gpu-bandwidth.js";
+import { deriveRuntimeEnvironment } from "./derivation/environment.js";
 
 export class QualityRefusalError extends Error {
   constructor(issues) {
@@ -355,6 +356,12 @@ export async function runBenchmark({
       endpoint: "loopback",
       layerAssignment: extractLayerAssignment(showRaw, runningEntry),
       kvCacheMetadata: extractKvCacheMetadata(showRaw),
+      // Run conditions only -- never an input to any derived metric (§8).
+      environment: deriveRuntimeEnvironment(
+        typeof adapter.readEnvironment === "function"
+          ? adapter.readEnvironment()
+          : {},
+      ),
     },
     model: extractModelMetadata(tagsEntry, showRaw),
     system: sanitizeSystem(
