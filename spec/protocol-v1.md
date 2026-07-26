@@ -430,26 +430,78 @@ and the §11 negative control testable in ordinary CI with no GPU present.
 
 Before first publication, the protocol must be run against a knowingly broken configuration —
 forced partial offload, oversized context, forced CPU fallback — and must be shown to produce
-materially worse numbers and to fire the corresponding §7 diagnostics.
+**materially worse throughput** than a baseline run on the same hardware and model.
 
 **If a badly configured machine scores well, the protocol measures nothing.** This is the
 single cheapest test that validates the entire premise, and it gates the freeze.
+
+**Throughput is the binding criterion; diagnostics firing is not.** Earlier wording required
+the control to *also* fire the corresponding §7 diagnostics. That is unsatisfiable on runtimes
+that do not expose the underlying facts: Ollama 0.32.3 reports no machine-readable per-layer
+GPU/CPU assignment, so `partial-cpu-offload` and `cpu-only-with-gpu` correctly report
+`unavailable` even on a deliberately broken configuration. Requiring them would make the gate
+permanently unpassable on the only runtime v1 supports, which in practice means it would be
+quietly waived — the worst outcome for a release condition. Where a runtime *does* expose the
+facts, the diagnostics must fire, and failing to do so is a defect.
+
+### 11.1 Result — 2026-07-25, RTX 4070 Ti, llama3.1:8b Q4_K_M, Ollama 0.32.3
+
+**PASSED.** Baseline against a control with `num_gpu 8` (~8 of 33 layers resident):
+
+| Metric | Baseline | Broken | Change |
+|---|---|---|---|
+| Generation throughput | 82.14 tok/s | 16.14 tok/s | **5.1× slower** |
+| Prefill throughput | 5,698.83 tok/s | 1,902.04 tok/s | 3.0× slower |
+| Time to first token | 217.12 ms | 286.20 ms | 32% worse |
+| Roofline utilization | 80.20% | 15.76% | −64 points |
+
+Both runs completed with 0/16 pass failures and 0/16 attempt failures, so the difference is
+signal rather than degraded data quality. The magnitude is physically coherent: with ~25 of 33
+layers evicted to system RAM, most weight reads move from GDDR6X (504 GB/s) to DDR5 (~80-100
+GB/s), and a ~5× decode slowdown is the expected consequence. Roofline utilization collapsing
+to 15.76% demonstrates the bandwidth-ceiling metric surfacing a misconfiguration without any
+cohort data — its intended purpose.
+
+As anticipated above, all three layer-assignment diagnostics reported `unavailable` in both
+runs; the gate rests on the throughput evidence.
 
 ---
 
 ## 12. Open questions — resolve during hardware testing, before freeze
 
-1. Exact prompt texts for W2/W3/W4. Must be license-clean, English, and chosen so W2/W4 rarely
-   trigger early EOS across common instruct-tuned models.
-2. Whether 5 repetitions is sufficient for a stable CV, or whether 7–10 is needed. Determine
-   empirically on the RTX 3080 and RTX 4070 Ti.
-3. Whether `load_duration` is reliable enough after a forced unload to be worth reporting at all.
-4. Whether Ollama reliably exposes per-layer GPU/CPU assignment in a machine-readable form, or
-   whether §7's partial-offload diagnostic needs a different detection route.
-5. The `num_ctx` value for W3 — 4096 is a starting assumption, not a verified saturation point.
-6. Where quantized weight size comes from for §6.2 — runtime-reported vs. model metadata.
+Status after the 2026-07-25 hardware session (RTX 4070 Ti, llama3.1:8b Q4_K_M, Ollama 0.32.3).
+Every figure below is measured on that one machine and model; a second GPU and a second model
+family are still required before the freeze.
 
-No v1.1 change closes these hardware questions.
+1. **Partially answered.** Exact prompt texts for W2/W3/W4, license-clean and chosen so W2/W4
+   rarely trigger early EOS. Measured on llama3.1: W2/W4 = 45 tokens, W3 = 2,650 tokens, all
+   inside their bands, and no early-EOS validity failure occurred across 32 measured passes in
+   two runs. **Still open:** a second model family, since token counts are tokenizer-specific
+   (the character-per-token ratio measured 6.73 for W3, against an estimate of 3.4–4.6 — see the
+   1.2 changelog).
+2. **Answered — 5 repetitions is sufficient.** Observed CVs: generation 0.57% / 0.05%, prefill
+   0.15% / 0.07%, TTFT 0.71% / 2.21% across the baseline and negative-control runs. Variance at
+   that level is far below anything 7–10 repetitions would meaningfully tighten. Retain 5.
+3. **Answered — `load_duration` is reliable.** 2.83 s and 3.06 s across two runs on the same
+   model, after a forced unload each time. Consistent and worth reporting.
+4. **Answered — Ollama does not expose it.** No machine-readable per-layer GPU/CPU assignment in
+   `/api/show` or `/api/ps` on 0.32.3. `partial-cpu-offload` and `cpu-only-with-gpu` correctly
+   report `unavailable`, including on a deliberately partial-offload configuration. §7 needs a
+   different detection route, or the diagnostics stay runtime-contingent. This is why §11 no
+   longer requires diagnostics to fire.
+5. **Still open.** W3 now measures real prefill (5,698.83 tok/s baseline, 1,902.04 broken —
+   sensitive to compute placement, so it is doing real work rather than hitting a cache). But
+   whether ~2,650 tokens *saturates* prefill is unproven: establishing that requires sweeping
+   context size and finding where throughput plateaus. Not attempted yet.
+6. **Weak supporting evidence, not closed.** `/api/tags` size gives 4.92 GB for llama3.1:8b
+   Q4_K_M, matching the ~4.9 GB download, and yields 80.20% roofline utilization on a
+   well-configured run — a plausible real-world figure. If the value included substantial
+   non-weight overhead, utilization would read systematically low. Confirming it is genuinely
+   quantized weight bytes rather than total blob size needs a direct comparison against GGUF
+   metadata.
+
+**Remaining before freeze:** items 5 and 6, item 1 on a second model family, and the whole set
+re-run on the RTX 3080 to confirm nothing here is specific to one GPU.
 
 ---
 
