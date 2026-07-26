@@ -314,17 +314,52 @@ independently verifiable and independently actionable:
 
 | Diagnostic | Detection |
 |---|---|
-| Partial CPU offload | `cpuLayers > 0 && cpuLayers < totalLayers`, as reported by the runtime |
+| Partial CPU offload | A layer split if the runtime reports one; otherwise `0 < size_vram < size` from `/api/ps` (§7.2) |
 | Context exceeds comfortable VRAM headroom | Unavailable in v1.1; see below |
-| CPU-only execution despite a present GPU | No GPU layers assigned while a GPU is detected |
+| CPU-only execution despite a present GPU | No GPU layers assigned, or `size_vram == 0`, while a GPU is detected |
 | Quantization larger than available VRAM permits | Weight size vs. VRAM |
 
-The partial-offload condition deliberately excludes both endpoints: zero CPU layers is full GPU
-offload, while CPU layers equal to total layers is CPU-only execution and belongs to the separate
+The partial-offload condition deliberately excludes both endpoints: nothing on the host is full
+GPU offload, while everything on the host is CPU-only execution and belongs to the separate
 CPU-only diagnostic.
 
-A report reading *"61% of bandwidth ceiling; 7 of 33 layers on CPU"* is more useful and more
-defensible than any percentage target, and it holds at n=1.
+A report reading *"61% of bandwidth ceiling; 65% of resident bytes on the host"* is more useful
+and more defensible than any percentage target, and it holds at n=1.
+
+### 7.2 Placement granularity — bytes, not layers
+
+Ollama exposes no per-layer GPU/CPU assignment on any released version (checked through 0.32.3:
+neither `/api/show` nor `/api/ps` carries one). `runtime.layerAssignment` is therefore always
+null, kept as the explicit record of that absence.
+
+What `/api/ps` *does* expose is `size` — the model's total resident footprint — and `size_vram`,
+the portion of it resident in VRAM. This is the same pair Ollama's own CLI uses to print the
+PROCESSOR column in `ollama ps`, so reading it is a direct reading, not an inference. Verified
+2026-07-26 against the CLI on 0.32.3 and 0.30.10, on two GPUs and two operating systems:
+
+| Forced state | `size_vram` / `size` | `ollama ps` printed | Diagnostic |
+|---|---|---|---|
+| default | 5,020,141,485 / 5,020,141,485 | `100% GPU` | neither fires |
+| `num_gpu 0` | 0 / 5,316,154,489 | `100% CPU` | `cpu-only-with-gpu` **detected** |
+| `num_gpu 10` | 1,850,893,925 / 5,357,646,640 | `65%/35% CPU/GPU` | `partial-cpu-offload` **detected** |
+
+**CPU-only detection is definitional here, not inferential.** Zero bytes resident in VRAM while a
+GPU is present *is* CPU-only execution; there is nothing left to infer.
+
+Two limits are binding on how this may be reported:
+
+1. **It is a fraction of resident footprint, not of layers and not of weights.** `size` includes
+   the KV cache and compute buffers. Reporting it as a layer count would be a fabrication —
+   §7's title is *detected, not inferred*, and bytes are what is detected.
+2. **`size` itself moves with placement.** The same model measured 5.02 GB fully resident in VRAM
+   and 5.36 GB partially offloaded, because host-side buffers differ. The fraction is therefore
+   meaningful only within a single observation and must never be differenced across runs.
+
+Exact layer counts do exist in the Ollama server log (`load_tensors: offloaded 10/33 layers to
+GPU`, which matched a forced `num_gpu 10` on both machines). That route is deliberately **not**
+taken: it is free-text llama.cpp stderr on an OS-specific path, not an API contract, and §10
+confines collection to the runtime's endpoint. If a runtime later reports layer counts through
+its API, the derivation prefers them and reports layer granularity instead.
 
 ### 7.1 Context VRAM headroom availability
 
@@ -506,14 +541,22 @@ forced partial offload, oversized context, forced CPU fallback — and must be s
 **If a badly configured machine scores well, the protocol measures nothing.** This is the
 single cheapest test that validates the entire premise, and it gates the freeze.
 
-**Throughput is the binding criterion; diagnostics firing is not.** Earlier wording required
-the control to *also* fire the corresponding §7 diagnostics. That is unsatisfiable on runtimes
-that do not expose the underlying facts: Ollama 0.32.3 reports no machine-readable per-layer
-GPU/CPU assignment, so `partial-cpu-offload` and `cpu-only-with-gpu` correctly report
-`unavailable` even on a deliberately broken configuration. Requiring them would make the gate
-permanently unpassable on the only runtime v1 supports, which in practice means it would be
-quietly waived — the worst outcome for a release condition. Where a runtime *does* expose the
-facts, the diagnostics must fire, and failing to do so is a defect.
+**Throughput is the binding criterion, and from client 0.9.0 the corresponding diagnostic must
+also fire.** Earlier wording required only throughput, because the diagnostics could not fire at
+all: the detection route then looked for a per-layer GPU/CPU assignment that Ollama has never
+exposed, so `partial-cpu-offload` and `cpu-only-with-gpu` reported `unavailable` even on a
+deliberately broken configuration. Requiring them would have made the gate permanently unpassable
+on the only runtime v1 supports, which in practice means it would have been quietly waived — the
+worst outcome for a release condition.
+
+That constraint is gone. §7.2 detects both conditions from `/api/ps` byte placement, verified
+against real forced-broken configurations on two GPUs and two operating systems. The gate is
+therefore restored to its stronger form: **a negative control must score worse *and* fire the
+diagnostic for the fault it introduces.** A control that degrades throughput while its diagnostic
+stays silent is a defect in the diagnostic, not an acceptable result.
+
+Diagnostics that remain genuinely unavailable — `context-vram-headroom`, which needs a resolved
+KV-cache element type Ollama does not report (§7.1) — are exempt, and no control targets them.
 
 ### 11.1 Result — 2026-07-25, RTX 4070 Ti, llama3.1:8b Q4_K_M, Ollama 0.32.3
 
@@ -688,11 +731,19 @@ freeze (item 1), along with items 5 and 6.
    that level is far below anything 7–10 repetitions would meaningfully tighten. Retain 5.
 3. **Answered — `load_duration` is reliable.** 2.83 s and 3.06 s across two runs on the same
    model, after a forced unload each time. Consistent and worth reporting.
-4. **Answered — Ollama does not expose it.** No machine-readable per-layer GPU/CPU assignment in
-   `/api/show` or `/api/ps` on 0.32.3. `partial-cpu-offload` and `cpu-only-with-gpu` correctly
-   report `unavailable`, including on a deliberately partial-offload configuration. §7 needs a
-   different detection route, or the diagnostics stay runtime-contingent. This is why §11 no
-   longer requires diagnostics to fire.
+4. **Answered — the layer question was the wrong question; both diagnostics now fire.** The
+   original finding stands as far as it goes: Ollama exposes no machine-readable per-layer
+   GPU/CPU assignment in `/api/show` or `/api/ps`, on 0.32.3 or on 0.30.10, and `layerAssignment`
+   is permanently null as a result. What did not follow is the conclusion drawn from it — that
+   the diagnostics must therefore stay `unavailable`. They never needed layer counts. `/api/ps`
+   reports `size` and `size_vram`, the same pair `ollama ps` uses for its PROCESSOR column, and
+   that pair separates all three placement states cleanly (§7.2): CPU-only is `size_vram == 0`,
+   which is definitional rather than inferred. Verified 2026-07-26 on two GPUs, two Ollama
+   versions and two operating systems, against forced `num_gpu 0` and `num_gpu 10` controls, with
+   the derived fraction matching the CLI's printed percentage exactly. The cost is granularity,
+   stated plainly in §7.2: this is a fraction of resident bytes, not of layers, over a denominator
+   that itself shifts with placement. Exact layer counts exist only in the server log and are
+   deliberately left there (§7.2). **§11's gate is restored to requiring the diagnostic to fire.**
 5. **Answered — W3 sits on the prefill plateau.** `scripts/sweep-prefill-saturation.js` sweeps
    prompt length from ~200 to ~7,000 tokens (RTX 3080, num_ctx 8192, unique prompt per call).
    Prefill throughput rises steeply off a fixed-overhead floor, reaches 95% of its ceiling by
@@ -721,11 +772,50 @@ saturation-bound (§12.5), and the roofline denominator is genuine weight bytes 
 3080 re-run (§11.2) confirms the negative control and items 2–4 are not GPU-specific. What
 remains before freeze is breadth, not open questions — more GPUs and model families in the
 fixture set — and any protocol gaps still marked provisional in the sections above (e.g. the §4
-contention threshold, the §12.4 layer-assignment detection route).
+contention threshold).
+
+The §12.4 detection route is **closed** as of client 0.9.0: both placement diagnostics now fire
+from `/api/ps` byte placement (§7.2), and §11's gate is restored to requiring them. The one
+diagnostic still genuinely unavailable is `context-vram-headroom` (§7.1), which needs a resolved
+KV-cache element type Ollama does not report through any endpoint — confirmed 2026-07-26, when
+an attempt to derive that type by differencing `/api/ps` `size` across two `num_ctx` values
+failed: compute buffers also scale with context, so a known-`q8_0` load measured 1.52 bytes per
+element against a nominal 1.0625 and would have been misclassified as `f16`. Do not retry that
+approach; it is not a precision problem but a contaminated denominator.
 
 ---
 
 ## 13. Changelog
+
+### `clientVersion` 0.9.0 — 2026-07-26 (§12.4 closed; the §11 gate is restored)
+
+Both placement diagnostics reported `unavailable` on every run ever captured, including
+deliberately broken ones. §12.4 recorded that as "Ollama does not expose it". The premise was
+right and the conclusion was wrong: the diagnostics were looking for a per-layer assignment that
+Ollama has never exposed, but neither of them needs one.
+
+- **`partial-cpu-offload` and `cpu-only-with-gpu` now fire**, from `/api/ps` `size` and
+  `size_vram` — the same pair `ollama ps` uses to print its PROCESSOR column, so this is a
+  reading rather than an inference. CPU-only detection is definitional: zero bytes resident in
+  VRAM beside a present GPU *is* CPU-only execution.
+- **Verified against forced controls on real hardware**, two GPUs, two Ollama versions, two
+  operating systems. `num_gpu 0` → `cpu-only-with-gpu` detected; `num_gpu 10` → `partial-cpu-offload`
+  detected at 65% host-resident, matching the CLI's printed `65%/35% CPU/GPU` exactly.
+- **Granularity is bytes, and is labelled as bytes** (§7.2). `runtime.layerAssignment` stays
+  permanently null as the explicit record that layers are not exposed; the new
+  `runtime.offloadPlacement` carries the byte figures. Bytes are never rendered as layer counts.
+  If a runtime ever reports layer counts through its API, the derivation prefers them.
+- **§11's release gate is restored to its stronger form**: a negative control must score worse
+  *and* fire the diagnostic for the fault it introduces. It was relaxed only because the
+  diagnostics could not fire at all.
+- **No measurement, derived metric or score changed** — diagnostics are reported findings, not
+  score inputs. Protocol and scoring versions are unchanged and every existing fixture stays
+  valid; `offloadPlacement` is optional in the schema. `clientVersion` alone moves.
+
+Also recorded: deriving the KV-cache element type by differencing `/api/ps` `size` across two
+`num_ctx` values does **not** work — compute buffers scale with context too, so a known-`q8_0`
+load measured 1.52 bytes/element against a nominal 1.0625. `context-vram-headroom` stays
+`unavailable` (§7.1).
 
 ### `clientVersion` 0.8.0 — 2026-07-26 (run-condition capture; no measurement changed)
 

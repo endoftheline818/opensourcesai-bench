@@ -69,9 +69,52 @@ export function extractLayerAssignment(showResponse, runningEntry) {
     }
   }
 
-  // §12.4 remains open. Do not infer layers from size_vram/size; those bytes
-  // are not a machine-readable per-layer assignment.
+  // Ollama exposes no per-layer GPU/CPU assignment on any released version
+  // (checked through 0.32.3: neither /api/show nor /api/ps carries one). This
+  // stays null as the explicit record of that absence. Byte-granular placement
+  // is reported separately by extractOffloadPlacement -- bytes are not layers
+  // and must never be presented as though they were.
   return null;
+}
+
+/**
+ * Where the loaded model actually sits, in bytes, from /api/ps.
+ *
+ * `size` is the model's total resident footprint and `size_vram` the portion
+ * of it resident in VRAM. This is the same pair Ollama's own CLI uses to print
+ * the PROCESSOR column in `ollama ps` ("100% GPU", "65%/35% CPU/GPU"), so it is
+ * a direct reading rather than an inference -- verified 2026-07-26 against the
+ * CLI on Ollama 0.32.3 and 0.30.10.
+ *
+ * Two limits, both material:
+ *   - This is a fraction of RESIDENT FOOTPRINT, not of layers and not of
+ *     weights. `size` includes the KV cache and compute buffers.
+ *   - `size` itself moves with placement. The same model measured 5.02 GB
+ *     fully on GPU and 5.36 GB partially offloaded, because host-side buffers
+ *     differ. So the fraction is only meaningful within a single observation.
+ */
+export function extractOffloadPlacement(runningEntry) {
+  const residentBytes = runningEntry?.size;
+  const vramResidentBytes =
+    runningEntry?.size_vram ?? runningEntry?.sizeVram ?? null;
+  if (
+    !Number.isFinite(residentBytes) ||
+    !Number.isFinite(vramResidentBytes) ||
+    residentBytes <= 0 ||
+    vramResidentBytes < 0 ||
+    // Ollama's CLI treats this pair as "Unknown" rather than clamping it.
+    vramResidentBytes > residentBytes
+  ) {
+    return null;
+  }
+  return {
+    source: "ollama.ps.size_vram",
+    granularity: "bytes",
+    residentBytes,
+    vramResidentBytes,
+    hostResidentBytes: residentBytes - vramResidentBytes,
+    vramResidentFraction: vramResidentBytes / residentBytes,
+  };
 }
 
 function positiveInteger(value) {

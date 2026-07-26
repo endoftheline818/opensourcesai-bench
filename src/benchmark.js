@@ -13,6 +13,7 @@ import {
   extractLayerAssignment,
   extractKvCacheMetadata,
   extractModelMetadata,
+  extractOffloadPlacement,
   extractRawMeasurement,
   extractResolvedConfiguration,
 } from "./derivation/ollama.js";
@@ -355,6 +356,7 @@ export async function runBenchmark({
       version: runtimeDetection.raw.version ?? null,
       endpoint: "loopback",
       layerAssignment: extractLayerAssignment(showRaw, runningEntry),
+      offloadPlacement: extractOffloadPlacement(runningEntry),
       kvCacheMetadata: extractKvCacheMetadata(showRaw),
       // Run conditions only -- never an input to any derived metric (§8).
       environment: deriveRuntimeEnvironment(
