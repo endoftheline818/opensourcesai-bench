@@ -22,6 +22,7 @@ const REDACTION_NOTES = Object.freeze([
   "Every retry attempt is retained in order, but only its final measurement chunk is kept; model output and intermediate chunks are omitted.",
   "Prompt and request bodies are never captured.",
   "Path-like model identifiers are replaced with [REDACTED_LOCAL_PATH].",
+  "/api/ps is allowlisted to size, size_vram and the model name; expires_at and all other fields are omitted.",
 ]);
 
 function isPlainObject(value) {
@@ -130,6 +131,44 @@ function sanitizedShowResponse(showResponse) {
   return result;
 }
 
+// The /api/ps entry for the loaded model, allowlisted to the two byte figures
+// the placement diagnostics read (§7.2) plus the identifiers needed to confirm
+// the entry belongs to the model under test.
+//
+// Without this, §11's restored gate is unverifiable by any committed fixture:
+// extractOffloadPlacement reads /api/ps at run time, but fixtures carried only
+// tagsResponse, showResponse and workloads — so a negative control could
+// demonstrate its throughput collapse in CI while the "and fires the
+// diagnostic" half of the gate could only ever be checked by hand on live
+// hardware. That is exactly the manual-verification situation capture mode
+// exists to remove.
+//
+// `size` and `size_vram` only. `expires_at`, `digest` and the full `details`
+// block are omitted: they are either wall-clock state that would make fixtures
+// non-deterministic, or already captured under tagsResponse.
+function sanitizedPsResponse(psEntry, redactedFields) {
+  if (!isPlainObject(psEntry)) return null;
+  const residentBytes = psEntry.size;
+  const vramResidentBytes = psEntry.size_vram ?? psEntry.sizeVram;
+  if (
+    !Number.isFinite(residentBytes) ||
+    !Number.isFinite(vramResidentBytes)
+  ) {
+    return null;
+  }
+  const result = {
+    size: residentBytes,
+    size_vram: vramResidentBytes,
+  };
+  // Model identifiers get the same path-redaction treatment as tagsResponse:
+  // a model loaded from a local file surfaces its path here too.
+  const name = psEntry.name ?? psEntry.model;
+  if (typeof name === "string") {
+    result.name = safeIdentifier(name, redactedFields, "psResponse.name");
+  }
+  return result;
+}
+
 function sanitizedWorkloadResponse(response) {
   const chunks = Array.isArray(response?.chunks) ? response.chunks : [];
   const final = [...chunks].reverse().find((chunk) => chunk?.done === true);
@@ -175,6 +214,7 @@ export function buildFixtureCapture({
   model,
   tagsResponse,
   showResponse,
+  psResponse,
   workloads,
 }) {
   if (
@@ -215,6 +255,11 @@ export function buildFixtureCapture({
     showResponse: sanitizedShowResponse(showResponse),
     workloads: sanitizedWorkloads(workloads),
   };
+  // Optional: fixtures captured before client 0.10.0 have no psResponse, and a
+  // runtime that reports no entry for the model yields none either. Absent is a
+  // valid state the placement derivation already handles by returning null.
+  const sanitizedPs = sanitizedPsResponse(psResponse, redactedFields);
+  if (sanitizedPs) fixture.psResponse = sanitizedPs;
   return validateFixtureFormat(fixture);
 }
 
@@ -265,6 +310,9 @@ export function renderFixtureCaptureSummary({ outputPath, fixture }) {
     `- showResponse: ${keys(fixture.showResponse)}`,
     `- showResponse.details: ${keys(fixture.showResponse.details)}`,
     `- showResponse.model_info: ${keys(fixture.showResponse.model_info)}`,
+    ...(fixture.psResponse
+      ? [`- psResponse: ${keys(fixture.psResponse)}`]
+      : ["- psResponse: not reported by the runtime at snapshot time"]),
     `- workload response: chunks[0] (${keys(finalChunk)}), timeToFirstTokenMs`,
     `- workload slots/attempts: ${Object.entries(fixture.workloads)
       .map(

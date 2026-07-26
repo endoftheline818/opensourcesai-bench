@@ -401,6 +401,10 @@ export async function runBenchmark({
       model,
       tagsResponse: tagsRaw,
       showResponse: showRaw,
+      // The same /api/ps entry extractOffloadPlacement reads, so a captured
+      // fixture can replay the §7.2 placement diagnostics rather than leaving
+      // §11's "and fires the diagnostic" criterion checkable only by hand.
+      psResponse: runningEntry,
       workloads: captureWorkloads,
     });
   }
