@@ -530,6 +530,32 @@ cannot fully separate "VRAM headroom" from "Ollama version" as the explanatory v
 headroom explanation is the physically motivated leading hypothesis, not a settled one; isolating
 it needs a test holding one variable fixed while varying the other.
 
+**Second confound, found after this run and material to the conclusion above (§8.4).** The two
+machines were not running the same KV-cache configuration: the 4070 Ti box sets
+`OLLAMA_KV_CACHE_TYPE=q8_0` and `OLLAMA_FLASH_ATTENTION=true`, the 3080 rig sets neither and
+runs f16. At the `num_ctx` this control uses, that is not a rounding difference — it is the
+whole effect being measured:
+
+| KV cache, llama3.1:8b at `num_ctx` 32768 | Allocation |
+|---|---|
+| 3080 rig — f16 | **4.295 GB** |
+| 4070 Ti — q8_0 | **2.282 GB** |
+| Difference | **2.013 GB** |
+
+The free-VRAM gap this section reports as evidence for the headroom hypothesis — ~1.1 GB against
+~3.1 GB, a gap of roughly 2.0 GB — is the same magnitude as the KV-cache-type difference alone.
+The 4070 Ti had headroom substantially *because it was quantizing its KV cache*, not only because
+it is a 12 GB card. Headroom and KV cache type are entangled here and this run cannot separate
+them.
+
+This does not overturn the finding, and it does not touch the cross-card TTFT result, which held
+in the same direction on both machines. It narrows what may be claimed: **the operative variable
+is VRAM pressure at the tested context, and this pair of runs cannot attribute that pressure
+between card capacity, KV cache element type, and Ollama version.** A decisive test holds KV
+cache type and Ollama version fixed and varies only free VRAM. Runs from client 0.8.0 onward
+record `runtime.environment`, so a repeat of this control will carry the KV setting in the
+result envelope rather than requiring it to be reconstructed from server logs afterwards.
+
 Both runs on both cards completed 0/16 pass and 0/16 attempt failures — every reported difference
 is signal, not degraded data quality.
 
