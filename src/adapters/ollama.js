@@ -419,7 +419,22 @@ async function queryOsVersion() {
 }
 
 function isOllamaProcess(processName) {
-  return /(^|[\\/])ollama(?:\.exe)?$/i.test(processName);
+  if (/(^|[\\/])ollama(?:\.exe)?$/i.test(processName)) return true;
+  // Ollama's actual GPU compute runs in a separately named runner process, not
+  // the `ollama` binary itself — observed directly on the RTX 3080 hardware
+  // session: /usr/local/lib/ollama/llama-server, resident and warm from an
+  // earlier call (keep_alive keeps it loaded), reported by nvidia-smi as
+  // "non-Ollama compute" and refusing every subsequent run deterministically,
+  // not as a one-off. Recognized only when "llama-server" sits inside an
+  // "ollama" path segment, so an unrelated standalone llama.cpp server a user
+  // runs themselves — same binary name, no "ollama" in its path — is still
+  // correctly counted as real contention.
+  //
+  // Windows equivalent unconfirmed: this session's Windows runs never hit the
+  // refusal, so either its runner is reported differently by nvidia-smi or
+  // this basename doesn't apply there. Add a Windows-specific pattern only
+  // once a real path is observed -- do not guess one.
+  return /[\\/]ollama[\\/].*llama-server(?:\.exe)?$/i.test(processName);
 }
 
 function modelIndependentIssues(system) {
