@@ -492,6 +492,78 @@ of one card.
 This closes the RTX 3080 portion of §12's re-run requirement for the negative control and items
 2–4. Items 1, 5, and 6 are unrelated to which GPU is underneath and remain open regardless.
 
+### 11.3 Result — 2026-07-26, oversized context, two GPUs, llama3.1:8b Q4_K_M
+
+**PASSED, with a finding more precise than "oversized context is always worse."**
+
+**Mechanism note.** Unlike `num_gpu`, `num_ctx` cannot be forced via a Modelfile — §5.1 fixes it
+as a protocol constant the client sends explicitly on every call, which always overrides a
+Modelfile default. This control instead temporarily edited `WORKLOADS.w2/w3/w4.numCtx` in
+`src/protocol.js` from 4096 to 32768 (leaving w1 untouched), ran once, and reverted before any
+commit. Reproducing this control requires the same temporary edit, not a Modelfile.
+
+| Metric | RTX 3080 baseline → 32768 | RTX 4070 Ti baseline → 32768 |
+|---|---|---|
+| Generation throughput | 116.99 → 74.44 tok/s (**−36.4%**) | 82.14 → 87.61 tok/s (**+6.7%**) |
+| Prefill throughput | 4,505.69 → 3,677.57 tok/s (−18.4%) | 5,698.83 → 5,967.82 tok/s (+4.7%) |
+| Time to first token | 169.55 → 179.81 ms (+6.1%) | 217.12 → 251.04 ms (**+15.6%**) |
+| Roofline utilization | 75.75% → 48.19% | 80.20% → 85.54% |
+| Free VRAM at this `num_ctx` | ~1.1 GB (10 GB card) | ~3.1 GB (12 GB card) |
+
+The 4070 Ti did not degrade — generation and prefill both moved slightly *up*, within the range
+of ordinary run-to-run variance, and roofline utilization tracked generation exactly (both
+computed against the same 102.42 tok/s ceiling, confirming the ceiling itself is correctly
+unaffected by context size). The 3080 degraded substantially.
+
+**What is consistent across both cards: time to first token got worse on both** (+6.1% and
++15.6%). Allocating a much larger KV cache buffer before the first token costs real, universal
+setup latency. **What is not consistent: steady-state throughput.** It degraded only on the card
+with little free VRAM at that context size, and held flat on the card with several gigabytes to
+spare. That is more informative than a uniform result would have been: it points at VRAM
+pressure, not context size per se, as the operative variable — the danger is specifically an
+oversized context that doesn't comfortably fit alongside the model, not large context in the
+abstract.
+
+**Confound, stated plainly.** The two machines also differ in Ollama version (0.30.10 vs.
+0.32.3) and OS, and those differences correlate with which card ran which test — this evidence
+cannot fully separate "VRAM headroom" from "Ollama version" as the explanatory variable. The
+headroom explanation is the physically motivated leading hypothesis, not a settled one; isolating
+it needs a test holding one variable fixed while varying the other.
+
+Both runs on both cards completed 0/16 pass and 0/16 attempt failures — every reported difference
+is signal, not degraded data quality.
+
+### 11.4 Result — 2026-07-26, RTX 3080, forced CPU fallback (`num_gpu 0`), llama3.1:8b Q4_K_M, Ollama 0.30.10
+
+**PASSED, decisively — the largest collapse of any §11 scenario, and asymmetric in exactly the
+way §5.2 predicts.**
+
+| Metric | Baseline | CPU-only | Change |
+|---|---|---|---|
+| Generation throughput | 116.99 tok/s | 6.15 tok/s | **19.0× slower** |
+| Prefill throughput | 4,505.69 tok/s | 70.40 tok/s | **64.0× slower** |
+| Time to first token | 169.55 ms | 338.03 ms | 2.0× slower |
+| Roofline utilization | 75.75% | 3.98% | −71.8 points |
+
+Prefill collapsed roughly 3.4× harder than generation (64× vs. 19×). §5.2 states prefill is
+compute-bound and generation is bandwidth-bound; a CPU's raw matrix-multiply throughput lags a
+GPU's far more than its memory bandwidth does relative to GDDR6X, so this asymmetry is exactly
+the physical signature that design rationale predicts. This is the cleanest empirical
+confirmation yet that the protocol's two-metric split is measuring the two distinct regimes it
+claims to.
+
+Both runs completed 0/16 pass and 0/16 attempt failures. All three layer-assignment diagnostics
+again reported `unavailable`, on the third distinct broken configuration to hit that Ollama
+limitation — fully consistent with §12.4 and the §11 preamble's rationale for resting the gate
+on throughput alone.
+
+**All three named §11 scenarios — forced partial offload, oversized context, forced CPU
+fallback — now have real-hardware evidence.** Partial offload and CPU fallback both pass
+unconditionally on every card tested. Oversized context passes with a more precise finding
+than originally anticipated: its effect on throughput is conditional on available headroom,
+not universal, while its effect on time-to-first-token is universal. Nothing here is a gap
+against the gate's own wording; the nuance is additional signal, not a shortfall.
+
 ---
 
 ## 12. Open questions — resolve during hardware testing, before freeze
