@@ -506,16 +506,19 @@ freeze (item 1), along with items 5 and 6.
    tokenizers. Re-measured with `scripts/diagnose-prompts.js`: llama3.1:8b gives W2/W4 = 45,
    W3 = 2,664 (6.73 characters per token); qwen3:8b — a genuinely independent family with a
    different tokenizer (~151k vocab against llama3.1's 128k) — gives W2/W4 = 49, W3 = 2,796
-   (6.41 chars/token). All four bands hold on both: each clears the W3 2,000-token floor with
-   >30% margin and stays >30% under `num_ctx`, so the 120-repetition sizing absorbs the
-   ~6.4–6.7 char-per-token spread these tokenizers produce on that text. A full qwen3:8b run
-   (RTX 3080, Ollama 0.30.10) completed 0/16 pass failures, so W2/W4 did not early-EOS on the
-   second family either. That run also surfaced and fixed the thinking-channel TTFT defect
-   (0.7.0 changelog): qwen3:8b's TTFT now reads 162 ms against llama3.1's 171 ms on the same GPU.
-   **Residual (strengthening, not a blocker):** a third lineage with a materially smaller
-   vocabulary — e.g. a 32k-vocab tokenizer, which tokenizes English ~40% less efficiently —
-   would stress the W3 `num_ctx` ceiling and the W2/W4 upper bound from the opposite direction,
-   and has not been run.
+   (6.41 chars/token); and phi3-mini — a much smaller 32k-vocab tokenizer (Llama-2 lineage),
+   chosen to stress the bands from the opposite direction — gives W2/W4 = 51, W3 = 3,276 (5.47
+   chars/token). All four bands hold on all three: each clears the W3 2,000-token floor and, at
+   the least-efficient end, phi3's 3,276-token W3 still keeps 20% headroom under `num_ctx`. The
+   120-repetition sizing absorbs the full 5.47–6.73 char-per-token spread these tokenizers
+   produce on that text (a 32k→151k vocab span), so the fixed prompts are not tuned to one
+   tokenizer. A full qwen3:8b run (RTX 3080, Ollama 0.30.10) completed 0/16 pass failures, so
+   W2/W4 did not early-EOS on a second family's generation either. That run also surfaced and
+   fixed the thinking-channel TTFT defect (0.7.0 changelog): qwen3:8b's TTFT now reads 162 ms
+   against llama3.1's 171 ms on the same GPU. (phi3-mini's band check is a prefill-only
+   token-count probe; it was not run as a full generation capture because its F16 weights plus a
+   4,096-token KV cache do not leave clean headroom on a 10 GB card, which would risk a silent
+   partial offload rather than a clean baseline.)
 2. **Answered — 5 repetitions is sufficient.** Observed CVs: generation 0.57% / 0.05%, prefill
    0.15% / 0.07%, TTFT 0.71% / 2.21% across the baseline and negative-control runs. Variance at
    that level is far below anything 7–10 repetitions would meaningfully tighten. Retain 5.
@@ -526,21 +529,35 @@ freeze (item 1), along with items 5 and 6.
    report `unavailable`, including on a deliberately partial-offload configuration. §7 needs a
    different detection route, or the diagnostics stay runtime-contingent. This is why §11 no
    longer requires diagnostics to fire.
-5. **Still open.** W3 now measures real prefill (5,698.83 tok/s baseline, 1,902.04 broken —
-   sensitive to compute placement, so it is doing real work rather than hitting a cache). But
-   whether ~2,650 tokens *saturates* prefill is unproven: establishing that requires sweeping
-   context size and finding where throughput plateaus. Not attempted yet.
-6. **Weak supporting evidence, not closed.** `/api/tags` size gives 4.92 GB for llama3.1:8b
-   Q4_K_M, matching the ~4.9 GB download, and yields 80.20% roofline utilization on a
-   well-configured run — a plausible real-world figure. If the value included substantial
-   non-weight overhead, utilization would read systematically low. Confirming it is genuinely
-   quantized weight bytes rather than total blob size needs a direct comparison against GGUF
-   metadata.
+5. **Answered — W3 sits on the prefill plateau.** `scripts/sweep-prefill-saturation.js` sweeps
+   prompt length from ~200 to ~7,000 tokens (RTX 3080, num_ctx 8192, unique prompt per call).
+   Prefill throughput rises steeply off a fixed-overhead floor, reaches 95% of its ceiling by
+   only ~380 tokens, and holds a broad plateau before a gentle decline past ~4,000 tokens as
+   attention cost grows. W3's operating point is on that plateau on both families measured:
+   llama3.1:8b 4,620 tok/s at 2,662 tokens = **98.2%** of its ceiling; qwen3:8b 4,457 tok/s at
+   2,797 tokens = **98.5%**. So W3 reports the saturation-bound prefill rate, not a length-sensitive
+   point on a rising curve, and the 2,000-token band floor (set for tokenizer robustness, §12.1)
+   sits well inside the saturated regime. Measured on one GPU; the mechanism is not GPU-specific
+   but the exact plateau shape is hardware-dependent.
+6. **Answered — `/api/tags` size is genuine weight bytes.** `scripts/verify-weight-size.js`
+   compares that size against the model's manifest layers and against the model blob parsed
+   directly as GGUF (tensor-data region = everything after the header, metadata, and tensor
+   table). Two levels agree: the non-weight manifest layers (template, license, params, config)
+   are ~14 KB, and the GGUF's non-tensor bytes are the header plus metadata — dominated by the
+   embedded tokenizer vocabulary. Genuine weight tensor bytes as a fraction of `/api/tags` size:
+   llama3.1:8b Q4_K_M (128k vocab) **99.840%**, qwen3:8b Q4_K_M (151k vocab) **99.886%**, phi3-mini
+   F16 (32k vocab) **99.990%**. The denominator therefore slightly *over*states weight bytes (by
+   the vocab-heavy metadata), pushing roofline utilization at most ~0.16% low — negligible, and
+   the opposite direction from a bug that would flatter a system. The "substantial non-weight
+   overhead" worry is disproven.
 
-**Remaining before freeze:** items 5 and 6. Item 1's second-model-family requirement is met
-(qwen3:8b — §12.1), leaving only a small-vocabulary third tokenizer as an optional strengthening.
-The RTX 3080 re-run (§11.2) confirms the negative control and items 2–4 are not specific to one
-GPU.
+**Remaining before freeze:** none of the original §12 questions. Items 1–6 are answered: the
+prompts hold across three tokenizer families spanning 32k–151k vocab (§12.1), W3 is
+saturation-bound (§12.5), and the roofline denominator is genuine weight bytes (§12.6). The RTX
+3080 re-run (§11.2) confirms the negative control and items 2–4 are not GPU-specific. What
+remains before freeze is breadth, not open questions — more GPUs and model families in the
+fixture set — and any protocol gaps still marked provisional in the sections above (e.g. the §4
+contention threshold, the §12.4 layer-assignment detection route).
 
 ---
 
