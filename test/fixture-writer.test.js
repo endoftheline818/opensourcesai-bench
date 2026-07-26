@@ -6,6 +6,7 @@ import path from "node:path";
 import { runBenchmark } from "../src/benchmark.js";
 import { extractRawMeasurement } from "../src/derivation/ollama.js";
 import { FIXTURE_SCHEMA_VERSION } from "../src/fixture-format.js";
+import { CLIENT_VERSION } from "../src/version.js";
 import {
   buildFixtureCapture,
   renderFixtureCaptureSummary,
@@ -134,7 +135,7 @@ test("captured fixture round-trips through the fixture loader without editing", 
   assert.equal(fixture.label, "rtx-4070-ti-partial-offload");
   assert.equal(fixture.capturedAt, "2026-07-25T12:00:00.000Z");
   assert.equal(fixture.schemaVersion, FIXTURE_SCHEMA_VERSION);
-  assert.equal(fixture.clientVersion, "0.6.0");
+  assert.equal(fixture.clientVersion, CLIENT_VERSION);
   assert.equal(fixture.protocolVersion, "osai-bench/1.3");
   assert.deepEqual(
     Object.fromEntries(
@@ -246,7 +247,7 @@ test("terminal summary names captured fields, counts, redactions, and path", () 
   assert.match(summary, /Saved real-hardware fixture: \/tmp\/summary-check\.json/);
   assert.match(summary, /label: summary-check/);
   assert.match(summary, /schemaVersion: osai-bench-fixture\/2/);
-  assert.match(summary, /clientVersion: 0\.6\.0/);
+  assert.ok(summary.includes(`clientVersion: ${CLIENT_VERSION}`));
   assert.match(summary, /protocolVersion: osai-bench\/1\.3/);
   assert.match(summary, /tagsResponse\.models\[0\]/);
   assert.match(summary, /showResponse\.model_info/);

@@ -77,6 +77,34 @@ test("different loaded model remains a model-dependent precondition", () => {
   );
 });
 
+test("time-to-first-token fires on the first streamed token in either channel", () => {
+  // A non-thinking model streams its first token into `response`. Unchanged
+  // behavior: this is what every pre-0.7.0 run measured.
+  assert.equal(__test.streamedChunkHasToken({ response: "1", done: false }), true);
+
+  // A reasoning model streams chain-of-thought into a separate `thinking`
+  // field while `response` stays empty. §5.2 defines TTFT as the first
+  // *streamed* token, so this must count — the fix for qwen3:8b, where W2's
+  // entire 128-token budget was spent in the thinking channel and TTFT was
+  // wrongly reported unavailable.
+  assert.equal(
+    __test.streamedChunkHasToken({ response: "", thinking: "Okay", done: false }),
+    true,
+  );
+
+  // The empty chunks Ollama emits before the first real token (observed:
+  // {"response":"","done":false} arrives twice before any content) must NOT
+  // start the clock, in either channel.
+  assert.equal(__test.streamedChunkHasToken({ response: "", done: false }), false);
+  assert.equal(
+    __test.streamedChunkHasToken({ response: "", thinking: "", done: false }),
+    false,
+  );
+
+  // Absent fields are not tokens either.
+  assert.equal(__test.streamedChunkHasToken({ done: true }), false);
+});
+
 test("connection errors name the exact loopback endpoint and action", () => {
   const error = __test.ollamaConnectionError(
     "/api/version",

@@ -119,7 +119,12 @@ all others run warm.
 **W2 — Short-prompt latency.** Short prompt, accepted band 20-64 tokens. `num_predict = 128`.
 Measures **time to first token** as observed wall-clock from request dispatch to first
 streamed token. This deliberately includes launch overhead, scheduling, and CPU involvement,
-because that is what a user experiences.
+because that is what a user experiences. The first streamed token is the first token in *either*
+output channel: a reasoning model streams its chain-of-thought into a separate `thinking` field
+while the visible `response` field stays empty, and that first thinking token is when decode
+begins — which is what launch-plus-prefill latency measures. Keying only on the visible channel
+reported TTFT as unavailable on qwen3:8b, whose entire W2 budget was spent in the thinking
+channel; see §12.1 and the 0.7.0 changelog.
 
 **W3 — Long-prompt prefill.** Long prompt, accepted band 2000 tokens to `num_ctx - 1`.
 `num_predict = 1`. Measures prefill throughput in a regime where the GPU is actually saturated.
@@ -465,20 +470,52 @@ cohort data — its intended purpose.
 As anticipated above, all three layer-assignment diagnostics reported `unavailable` in both
 runs; the gate rests on the throughput evidence.
 
+### 11.2 Result — 2026-07-26, RTX 3080, llama3.1:8b Q4_K_M, Ollama 0.30.10
+
+**PASSED.** Same `num_gpu 8` control as §11.1 (~8 of 33 layers resident), a second GPU:
+
+| Metric | Baseline | Broken | Change |
+|---|---|---|---|
+| Generation throughput | 117.03 tok/s | 8.76 tok/s | **13.4× slower** |
+| Prefill throughput | 4,503.26 tok/s | 711.21 tok/s | 6.3× slower |
+| Time to first token | 171.38 ms | 290.79 ms | 70% worse |
+| Roofline utilization | 75.77% | 5.67% | −70.1 points |
+
+Both runs completed with 0/16 pass failures and 0/16 attempt failures. The collapse is larger here
+than on the 4070 Ti (5.1×, −64 points), and in the expected direction: the 3080's higher memory
+bandwidth (760 GB/s vs. the 4070 Ti's 504 GB/s) means a larger relative penalty when layers evict
+to the same class of system DDR5 — a faster GPU has further to fall. All three layer-assignment
+diagnostics again reported `unavailable`, on a different Ollama version (0.30.10 vs. 0.32.3) and a
+different GPU vendor generation, reinforcing that this is a runtime limitation rather than a quirk
+of one card.
+
+This closes the RTX 3080 portion of §12's re-run requirement for the negative control and items
+2–4. Items 1, 5, and 6 are unrelated to which GPU is underneath and remain open regardless.
+
 ---
 
 ## 12. Open questions — resolve during hardware testing, before freeze
 
-Status after the 2026-07-25 hardware session (RTX 4070 Ti, llama3.1:8b Q4_K_M, Ollama 0.32.3).
-Every figure below is measured on that one machine and model; a second GPU and a second model
-family are still required before the freeze.
+Status after the 2026-07-25 RTX 4070 Ti hardware session. Every per-item figure below is measured
+on that one machine and model. A second GPU has since been checked for the negative control and
+for items 2–4 (§11.2, RTX 3080, 2026-07-26) — a second model family is still required before the
+freeze (item 1), along with items 5 and 6.
 
-1. **Partially answered.** Exact prompt texts for W2/W3/W4, license-clean and chosen so W2/W4
-   rarely trigger early EOS. Measured on llama3.1: W2/W4 = 45 tokens, W3 = 2,650 tokens, all
-   inside their bands, and no early-EOS validity failure occurred across 32 measured passes in
-   two runs. **Still open:** a second model family, since token counts are tokenizer-specific
-   (the character-per-token ratio measured 6.73 for W3, against an estimate of 3.4–4.6 — see the
-   1.2 changelog).
+1. **Answered — a second model family confirms the prompts hold.** The W2/W3/W4 prompt texts are
+   license-clean originals, sized (§5.2) so their token counts land inside each band across
+   tokenizers. Re-measured with `scripts/diagnose-prompts.js`: llama3.1:8b gives W2/W4 = 45,
+   W3 = 2,664 (6.73 characters per token); qwen3:8b — a genuinely independent family with a
+   different tokenizer (~151k vocab against llama3.1's 128k) — gives W2/W4 = 49, W3 = 2,796
+   (6.41 chars/token). All four bands hold on both: each clears the W3 2,000-token floor with
+   >30% margin and stays >30% under `num_ctx`, so the 120-repetition sizing absorbs the
+   ~6.4–6.7 char-per-token spread these tokenizers produce on that text. A full qwen3:8b run
+   (RTX 3080, Ollama 0.30.10) completed 0/16 pass failures, so W2/W4 did not early-EOS on the
+   second family either. That run also surfaced and fixed the thinking-channel TTFT defect
+   (0.7.0 changelog): qwen3:8b's TTFT now reads 162 ms against llama3.1's 171 ms on the same GPU.
+   **Residual (strengthening, not a blocker):** a third lineage with a materially smaller
+   vocabulary — e.g. a 32k-vocab tokenizer, which tokenizes English ~40% less efficiently —
+   would stress the W3 `num_ctx` ceiling and the W2/W4 upper bound from the opposite direction,
+   and has not been run.
 2. **Answered — 5 repetitions is sufficient.** Observed CVs: generation 0.57% / 0.05%, prefill
    0.15% / 0.07%, TTFT 0.71% / 2.21% across the baseline and negative-control runs. Variance at
    that level is far below anything 7–10 repetitions would meaningfully tighten. Retain 5.
@@ -500,12 +537,42 @@ family are still required before the freeze.
    quantized weight bytes rather than total blob size needs a direct comparison against GGUF
    metadata.
 
-**Remaining before freeze:** items 5 and 6, item 1 on a second model family, and the whole set
-re-run on the RTX 3080 to confirm nothing here is specific to one GPU.
+**Remaining before freeze:** items 5 and 6. Item 1's second-model-family requirement is met
+(qwen3:8b — §12.1), leaving only a small-vocabulary third tokenizer as an optional strengthening.
+The RTX 3080 re-run (§11.2) confirms the negative control and items 2–4 are not specific to one
+GPU.
 
 ---
 
 ## 13. Changelog
+
+### `clientVersion` 0.7.0 — 2026-07-26 (client fix; second model family added)
+
+Found on the first run of a second model family — qwen3:8b (RTX 3080, Ollama 0.30.10), added to
+close §12.1's requirement that the fixed prompts hold on a second, genuinely different tokenizer.
+They do: all four bands are satisfied (W2/W4 = 49 tokens, W3 = 2,796) and the run completed 0/16
+pass failures. But one metric came back wrong.
+
+- **Time to first token was reported `unavailable` for a reasoning model.** §5.2 defines TTFT as
+  the time to the first *streamed token*, but the collector started its clock only on the first
+  non-empty `response` chunk. qwen3:8b is a thinking-by-default model: on W2 (`num_predict = 128`)
+  it spent the whole budget in Ollama's separate `thinking` channel — 128 generated tokens,
+  `response` empty on every one — so the clock never started and TTFT came back unavailable, even
+  though generation throughput and every validity check were unaffected (they read Ollama's own
+  token counters, which count thinking tokens). Confirmed by a direct `/api/generate` probe:
+  `response` length 0, `thinking` length 542, `done_reason: length`.
+- **Fix:** the first-token clock now starts on the first streamed token in *either* channel
+  (`response` or `thinking`). For a non-thinking model this is byte-identical to prior behavior —
+  its first streamed token is a `response` token — and for a reasoning model it captures the true
+  first-token latency the metric was always defined to measure.
+
+This corrects the implementation to match §5.2's existing "first streamed token" definition rather
+than changing that definition, so nothing previously reported as a valid measurement changes:
+non-thinking runs are identical, and thinking runs move from a wrong `null` to a real number. The
+protocol contract is unchanged — `protocolVersion` stays `osai-bench/1.3` and `scoringVersion`
+stays `osai-bench-derive/1.3`; only `clientVersion` moves to 0.7.0. Fixtures captured before 0.7.0
+remain valid; a thinking-model fixture captured earlier carries a `null` TTFT and should be
+re-captured to populate it.
 
 ### `osai-bench/1.3` — 2026-07-25 (protocol revision, first real-hardware run)
 

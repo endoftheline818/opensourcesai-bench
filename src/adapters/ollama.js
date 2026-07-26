@@ -82,6 +82,22 @@ async function requestJson(endpoint, { method = "GET", body } = {}) {
   });
 }
 
+// A streamed chunk carries a generated token when it has non-empty text in
+// EITHER channel. Ollama routes a reasoning model's chain-of-thought to a
+// separate `thinking` field, leaving `response` empty until the model exits
+// its reasoning phase. A thinking token is still a streamed generated token,
+// and §5.2 defines TTFT as time to the first *streamed token*, not the first
+// visible one. Keying only on `response` reported TTFT as unavailable for a
+// thinking model that never emits a visible token within num_predict —
+// observed on qwen3:8b (W2, num_predict 128: 128 tokens generated, every one
+// in the thinking channel, response empty throughout). See the 0.7.0 changelog.
+function streamedChunkHasToken(chunk) {
+  return (
+    (typeof chunk.response === "string" && chunk.response.length > 0) ||
+    (typeof chunk.thinking === "string" && chunk.thinking.length > 0)
+  );
+}
+
 async function requestNdjson(endpoint, body) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -115,11 +131,7 @@ async function requestNdjson(endpoint, body) {
           try {
             const parsed = JSON.parse(line);
             chunks.push(parsed);
-            if (
-              firstTokenAt === null &&
-              typeof parsed.response === "string" &&
-              parsed.response.length > 0
-            ) {
+            if (firstTokenAt === null && streamedChunkHasToken(parsed)) {
               firstTokenAt = performance.now();
             }
           } catch (error) {
@@ -134,11 +146,7 @@ async function requestNdjson(endpoint, body) {
           try {
             const parsed = JSON.parse(buffer);
             chunks.push(parsed);
-            if (
-              firstTokenAt === null &&
-              typeof parsed.response === "string" &&
-              parsed.response.length > 0
-            ) {
+            if (firstTokenAt === null && streamedChunkHasToken(parsed)) {
               firstTokenAt = performance.now();
             }
           } catch (error) {
@@ -627,4 +635,5 @@ export const __test = {
   modelIndependentIssues,
   ollamaConnectionError,
   parseCsvLine,
+  streamedChunkHasToken,
 };
