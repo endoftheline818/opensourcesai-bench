@@ -119,7 +119,12 @@ all others run warm.
 **W2 — Short-prompt latency.** Short prompt, accepted band 20-64 tokens. `num_predict = 128`.
 Measures **time to first token** as observed wall-clock from request dispatch to first
 streamed token. This deliberately includes launch overhead, scheduling, and CPU involvement,
-because that is what a user experiences.
+because that is what a user experiences. The first streamed token is the first token in *either*
+output channel: a reasoning model streams its chain-of-thought into a separate `thinking` field
+while the visible `response` field stays empty, and that first thinking token is when decode
+begins — which is what launch-plus-prefill latency measures. Keying only on the visible channel
+reported TTFT as unavailable on qwen3:8b, whose entire W2 budget was spent in the thinking
+channel; see §12.1 and the 0.7.0 changelog.
 
 **W3 — Long-prompt prefill.** Long prompt, accepted band 2000 tokens to `num_ctx - 1`.
 `num_predict = 1`. Measures prefill throughput in a regime where the GPU is actually saturated.
@@ -529,6 +534,34 @@ re-run (§11.2) confirms the negative control and items 2–4 are not specific t
 ---
 
 ## 13. Changelog
+
+### `clientVersion` 0.7.0 — 2026-07-26 (client fix; second model family added)
+
+Found on the first run of a second model family — qwen3:8b (RTX 3080, Ollama 0.30.10), added to
+close §12.1's requirement that the fixed prompts hold on a second, genuinely different tokenizer.
+They do: all four bands are satisfied (W2/W4 = 49 tokens, W3 = 2,796) and the run completed 0/16
+pass failures. But one metric came back wrong.
+
+- **Time to first token was reported `unavailable` for a reasoning model.** §5.2 defines TTFT as
+  the time to the first *streamed token*, but the collector started its clock only on the first
+  non-empty `response` chunk. qwen3:8b is a thinking-by-default model: on W2 (`num_predict = 128`)
+  it spent the whole budget in Ollama's separate `thinking` channel — 128 generated tokens,
+  `response` empty on every one — so the clock never started and TTFT came back unavailable, even
+  though generation throughput and every validity check were unaffected (they read Ollama's own
+  token counters, which count thinking tokens). Confirmed by a direct `/api/generate` probe:
+  `response` length 0, `thinking` length 542, `done_reason: length`.
+- **Fix:** the first-token clock now starts on the first streamed token in *either* channel
+  (`response` or `thinking`). For a non-thinking model this is byte-identical to prior behavior —
+  its first streamed token is a `response` token — and for a reasoning model it captures the true
+  first-token latency the metric was always defined to measure.
+
+This corrects the implementation to match §5.2's existing "first streamed token" definition rather
+than changing that definition, so nothing previously reported as a valid measurement changes:
+non-thinking runs are identical, and thinking runs move from a wrong `null` to a real number. The
+protocol contract is unchanged — `protocolVersion` stays `osai-bench/1.3` and `scoringVersion`
+stays `osai-bench-derive/1.3`; only `clientVersion` moves to 0.7.0. Fixtures captured before 0.7.0
+remain valid; a thinking-model fixture captured earlier carries a `null` TTFT and should be
+re-captured to populate it.
 
 ### `osai-bench/1.3` — 2026-07-25 (protocol revision, first real-hardware run)
 

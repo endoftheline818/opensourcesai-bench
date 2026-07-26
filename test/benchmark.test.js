@@ -6,6 +6,7 @@ import {
   runBenchmark,
 } from "../src/benchmark.js";
 import { WORKLOADS } from "../src/protocol.js";
+import { CLIENT_VERSION } from "../src/version.js";
 
 function systemSnapshot() {
   return {
@@ -176,7 +177,7 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.derived.passFailureRate.percent, 0);
   assert.equal(record.derived.attemptFailureRate.percent, 0);
   assert.equal(record.protocolVersion, "osai-bench/1.3");
-  assert.equal(record.clientVersion, "0.6.0");
+  assert.equal(record.clientVersion, CLIENT_VERSION);
   assert.equal(record.scoringVersion, "osai-bench-derive/1.3");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });

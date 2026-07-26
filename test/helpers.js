@@ -5,6 +5,7 @@ import { extractRawMeasurement } from "../src/derivation/ollama.js";
 import { validatePass } from "../src/derivation/validity.js";
 import { validateFixtureFormat } from "../src/fixture-format.js";
 import { WORKLOADS } from "../src/protocol.js";
+import { CLIENT_VERSION } from "../src/version.js";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,7 +57,7 @@ export async function normalRecord(
   }
   return {
     protocolVersion: "osai-bench/1.3",
-    clientVersion: "0.6.0",
+    clientVersion: CLIENT_VERSION,
     scoringVersion: "osai-bench-derive/1.3",
     createdAt: "2026-07-25T00:00:00.000Z",
     qualityOverride: false,
