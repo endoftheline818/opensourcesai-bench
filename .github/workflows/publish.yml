@@ -1,0 +1,49 @@
+name: publish
+
+# Releases are tag-driven. Pushing a tag that matches the package.json version
+# is the entire release action; nothing publishes from a branch or by hand.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  id-token: write # required for npm OIDC trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest # OIDC provenance requires a cloud-hosted runner
+    steps:
+      - uses: actions/checkout@v4
+
+      # No registry-url: setup-node would write an .npmrc referencing
+      # NODE_AUTH_TOKEN, and this repository publishes with OIDC only.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # Trusted publishing needs npm >= 11.5.1. Pin it rather than inheriting
+      # whatever the runner image happens to ship this month.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - run: npm test
+
+      # The tag is the release's only input, so a tag that disagrees with
+      # package.json would publish a version nobody named. Fail loudly instead.
+      - name: Verify tag matches package.json version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v${tag} does not match package.json ${pkg}"
+            exit 1
+          fi
+          echo "tag v${tag} matches package.json"
+
+      # access + provenance come from publishConfig. Provenance is generated
+      # automatically under trusted publishing and requires a public repository.
+      - run: npm publish
