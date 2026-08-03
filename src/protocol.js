@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = "osai-bench/1.3";
-export const SCORING_VERSION = "osai-bench-derive/1.3";
+export const SCORING_VERSION = "osai-bench-derive/1.4";
 
 export const REPETITIONS = 5;
 export const WARMUP_PASSES = 1;

@@ -105,6 +105,43 @@ test("time-to-first-token fires on the first streamed token in either channel", 
   assert.equal(__test.streamedChunkHasToken({ done: true }), false);
 });
 
+test("visible-token detection ignores the thinking channel entirely", () => {
+  // A non-thinking model's first token still counts, same as TTFT.
+  assert.equal(
+    __test.streamedChunkHasVisibleToken({ response: "1", done: false }),
+    true,
+  );
+
+  // The exact case this exists for: a chunk with real reasoning content but
+  // an empty `response` must NOT count as visible. streamedChunkHasToken
+  // returns true for this same chunk -- that divergence is the point.
+  assert.equal(
+    __test.streamedChunkHasVisibleToken({
+      response: "",
+      thinking: "Okay",
+      done: false,
+    }),
+    false,
+  );
+  assert.equal(
+    __test.streamedChunkHasToken({
+      response: "",
+      thinking: "Okay",
+      done: false,
+    }),
+    true,
+  );
+
+  assert.equal(
+    __test.streamedChunkHasVisibleToken({ response: "", done: false }),
+    false,
+  );
+  assert.equal(
+    __test.streamedChunkHasVisibleToken({ done: true }),
+    false,
+  );
+});
+
 test("connection errors name the exact loopback endpoint and action", () => {
   const error = __test.ollamaConnectionError(
     "/api/version",

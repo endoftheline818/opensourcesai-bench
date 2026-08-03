@@ -26,6 +26,31 @@ test("human report displays every required measurement and roofline limit", asyn
   assert.doesNotMatch(report, /setup score|letter grade|well-configured/i);
 });
 
+test("time to first visible token is omitted from an ordinary report", async () => {
+  const record = await normalRecord();
+  record.derived = deriveMetrics(record);
+  const report = renderReport(record);
+  assert.doesNotMatch(report, /Time to first visible token/);
+  assert.doesNotMatch(report, /reasoning withheld/);
+});
+
+test("reasoning-withheld passes are annotated on the TTFT line, and the visible-token line appears once real values exist", async () => {
+  const record = await normalRecord();
+  const w2Passes = record.rawMeasurements.workloads.w2.measuredPasses;
+  w2Passes[0].measurement.timeToFirstTokenMs = null;
+  const w4Passes = record.rawMeasurements.workloads.w4.measuredPasses;
+  w4Passes.forEach((pass, index) => {
+    pass.measurement.timeToFirstVisibleTokenMs = 140_000 + index * 1000;
+  });
+  record.derived = deriveMetrics(record);
+  const report = renderReport(record);
+  assert.match(
+    report,
+    /Time to first token .*\[1\/5 pass\(es\): reasoning withheld the entire streamed response\]/,
+  );
+  assert.match(report, /Time to first visible token\s+142000\.00 ms/);
+});
+
 test("report says roofline unavailable when denominator input is missing", async () => {
   const record = await normalRecord();
   record.configuration.memoryBandwidthGBps = null;

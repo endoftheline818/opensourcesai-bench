@@ -98,11 +98,30 @@ function streamedChunkHasToken(chunk) {
   );
 }
 
+// Narrower than streamedChunkHasToken: true only for a token a caller would
+// actually SEE, ignoring the `thinking` channel entirely. §5.2's canonical
+// TTFT deliberately counts thinking tokens (above), but that leaves no way to
+// answer "how long did the user actually wait before anything appeared" for a
+// reasoning model — a real, separate question, and for a deep-reasoning model
+// it can diverge by two orders of magnitude from streamed TTFT. Observed on
+// gemma4:31b (lab run 9, 2026-08-03): when the workload's num_predict budget
+// is exhausted entirely inside reasoning, Ollama emits ZERO chunks with
+// content in either channel — a direct probe on real hardware confirmed a
+// 16-token generate call returned exactly one terminal chunk, response
+// empty, no `thinking` field present at all. streamedChunkHasToken correctly
+// reports no token there (there genuinely was none to stream), and this
+// tracks the same true absence — it exists to give the LONGER-budget
+// workload a chance to observe a token this one may never see.
+function streamedChunkHasVisibleToken(chunk) {
+  return typeof chunk.response === "string" && chunk.response.length > 0;
+}
+
 async function requestNdjson(endpoint, body) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let buffer = "";
     let firstTokenAt = null;
+    let firstVisibleTokenAt = null;
     let dispatchAt = null;
     const request = http.request(requestOptions(endpoint, "POST"), (response) => {
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -131,8 +150,18 @@ async function requestNdjson(endpoint, body) {
           try {
             const parsed = JSON.parse(line);
             chunks.push(parsed);
+            const now =
+              firstTokenAt === null || firstVisibleTokenAt === null
+                ? performance.now()
+                : null;
             if (firstTokenAt === null && streamedChunkHasToken(parsed)) {
-              firstTokenAt = performance.now();
+              firstTokenAt = now;
+            }
+            if (
+              firstVisibleTokenAt === null &&
+              streamedChunkHasVisibleToken(parsed)
+            ) {
+              firstVisibleTokenAt = now;
             }
           } catch (error) {
             reject(new Error(`Ollama stream returned invalid NDJSON: ${error.message}`));
@@ -146,8 +175,18 @@ async function requestNdjson(endpoint, body) {
           try {
             const parsed = JSON.parse(buffer);
             chunks.push(parsed);
+            const now =
+              firstTokenAt === null || firstVisibleTokenAt === null
+                ? performance.now()
+                : null;
             if (firstTokenAt === null && streamedChunkHasToken(parsed)) {
-              firstTokenAt = performance.now();
+              firstTokenAt = now;
+            }
+            if (
+              firstVisibleTokenAt === null &&
+              streamedChunkHasVisibleToken(parsed)
+            ) {
+              firstVisibleTokenAt = now;
             }
           } catch (error) {
             reject(new Error(`Ollama stream returned invalid NDJSON: ${error.message}`));
@@ -159,6 +198,10 @@ async function requestNdjson(endpoint, body) {
           chunks,
           timeToFirstTokenMs:
             firstTokenAt === null ? null : firstTokenAt - dispatchAt,
+          timeToFirstVisibleTokenMs:
+            firstVisibleTokenAt === null
+              ? null
+              : firstVisibleTokenAt - dispatchAt,
         });
       });
     });
@@ -644,4 +687,5 @@ export const __test = {
   ollamaConnectionError,
   parseCsvLine,
   streamedChunkHasToken,
+  streamedChunkHasVisibleToken,
 };

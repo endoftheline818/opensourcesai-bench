@@ -126,6 +126,17 @@ begins — which is what launch-plus-prefill latency measures. Keying only on th
 reported TTFT as unavailable on qwen3:8b, whose entire W2 budget was spent in the thinking
 channel; see §12.1 and the 0.7.0 changelog.
 
+> **Optional, supplementary: time to first VISIBLE token.** A client MAY additionally record
+> time to the first token in the `response` channel specifically, ignoring `thinking` entirely,
+> reported from W4 rather than W2 (W2's small budget is exactly the case most likely to be
+> consumed entirely by reasoning, making a W2-derived figure null for the runs where it would
+> matter most). This is a genuinely different quantity from canonical TTFT above — for a deep-
+> reasoning model it can diverge by two orders of magnitude — and exists to answer "how long
+> before anything appeared" rather than "how long before decode began." It is never a substitute
+> for canonical TTFT and must never be presented under the same label. See lab run 9
+> (2026-08-03, `opensourcesai.com/docs/lab`): a model whose entire W2 budget stayed inside
+> reasoning reported TTFT `unavailable` while its W4 first-visible-token time was ~142 seconds.
+
 **W3 — Long-prompt prefill.** Long prompt, accepted band 2000 tokens to `num_ctx - 1`.
 `num_predict = 1`. Measures prefill throughput in a regime where the GPU is actually saturated.
 Every call — the warmup and every attempt of every measured pass, including retries — sends a
@@ -786,6 +797,86 @@ approach; it is not a precision problem but a contaminated denominator.
 ---
 
 ## 13. Changelog
+
+### `clientVersion` 0.11.0 — 2026-08-03 (thinking-model TTFT disambiguated; duration estimate rebuilt)
+
+Found on `gemma4:31b` (lab run 9, 2026-08-03, RTX 3080, severe CPU/GPU split-mode offload) — the
+first thinking-capable model run through the full protocol against genuinely constrained
+hardware. Two independent findings from the same run.
+
+**Time to first token.** W2's entire 128-token budget stayed inside reasoning on every one of
+five measured passes: a direct `/api/generate` probe confirmed Ollama emitted exactly one
+terminal chunk, `response` empty, no `thinking` field present at all — the model's whole
+reasoning phase, generated and discarded server-side, with nothing streamed in either channel.
+§5.2's TTFT correctly reported `unavailable`; that is what "first streamed token" means when
+nothing was streamed. But the derivation's null-handling had a real, if narrow, defect
+underneath it:
+
+- **`deriveMetrics` now excludes null TTFT values from median/CV instead of letting them corrupt
+  the arithmetic.** `mean()`/`median()` (§6, `statistics.js`) coerce `null` to `0` during
+  addition, so a partially-null set of five would have silently dragged the median toward zero
+  rather than excluding the null passes — invisible until now because every null TTFT on record
+  was also the *only* data point for its run (all five, never some), so "corrupt toward zero"
+  and "correctly exclude" happened to produce the same result by coincidence. `samples` now
+  reflects usable data points, not scheduled ones, and a new `reasoningWithheldPasses` count on
+  `derived.timeToFirstTokenMs` records how many were excluded and why (generation genuinely
+  happened — `eval_count > 0` — but no chunk in either channel was ever streamed). This is a
+  genuine derivation-formula change for the — currently only theoretical — case of a mixed
+  null/real set; the all-null case this run actually produced reports identically to before.
+  `scoringVersion` therefore moves to `osai-bench-derive/1.4`.
+- **A new optional field, `derived.timeToFirstVisibleTokenMs`, answers the question TTFT
+  deliberately does not:** how long before anything a user would actually see appeared. Derived
+  from **W4**, not W2 — W2's small budget is exactly the case most likely to be entirely consumed
+  by reasoning, which would make a W2-derived figure null for precisely the runs where it matters
+  most. On this run, W4's larger 512-token budget captured a real value every time: ~142 seconds
+  median. Purely additive — canonical TTFT's computation and meaning are unchanged, and this
+  field is `null` on every fixture and record that predates it. See spec §5.2 for the full
+  boundary between the two quantities.
+- Collection-layer support: the adapter now tracks a first-*visible*-token timestamp alongside
+  the existing first-streamed-token one (`src/adapters/ollama.js`); `extractRawMeasurement` and
+  the fixture capture allowlist (`src/output/fixture-writer.js`) carry it through, optionally, the
+  same way `offloadPlacement` and `environment` were introduced.
+- The human report (`src/output/report.js`) annotates the TTFT line with the withheld-pass count
+  when it is nonzero, and prints the visible-token line only when a run actually produced one —
+  most runs never touch a reasoning model, and an "unavailable" line on every ordinary report
+  would bury the one case this exists for.
+
+**Estimated run duration.** The same run's pre-run estimate ("about 2-8 minutes") undershot its
+real ~30-minute duration by roughly 4x. Investigating why surfaced a structural defect
+independent of the undershoot itself: the estimator summed prompt-processing tokens and
+completion tokens into one pool and divided by a single throughput band, despite this project's
+own roofline model already treating prefill and generation as different regimes with no shared
+ceiling (§6.2, ROOFLINE_LIMITS). Every real hardware figure on record shows why that matters —
+this run alone measured 177.63 tok/s prefill against 2.34 tok/s generation, a 76x gap.
+
+- **The estimator now tracks two token pools, not one** — prompt-processing tokens (governed by a
+  100-5,000 tok/s planning band, grounded in every real prefill figure on record as of 2026-08)
+  and completion tokens (the original 50-200 tok/s band, which was reasonably calibrated for
+  generation specifically all along). `estimateRunDuration()`'s return shape changes accordingly:
+  `configuredTokens` splits into `configuredPrefillTokens` and `configuredGenerationTokens`.
+  Decomposing the two pools also fixed a second, independent inaccuracy: on ordinary
+  well-provisioned hardware, a real full run typically completes in under a minute, yet the old
+  single-pool estimate promised 2-8 minutes for every configuration alike, healthy or not.
+- **The dominant-workload message is now driven by the value it names, rather than hardcoded.**
+  `durationEstimateMessages()` previously printed "W3 dominates..." unconditionally regardless of
+  what `estimateRunDuration()` actually computed; it now reads `dominantWorkload`, itself now
+  chosen by pessimistic wall-clock contribution rather than raw scheduled-token count, since
+  which workload threatens to dominate REAL duration under adverse conditions is not the same
+  question as which one has the most tokens on paper.
+- **A single revised estimate is printed once, live, when the first real measured pass shows the
+  static bands were wrong** — after W2's first measured pass, if the observed generation and/or
+  prefill rate projects a total meaningfully worse than the baseline's own upper bound, one
+  message prints the corrected total; a healthy run never sees it. This is the piece that
+  actually closes the 4x gap this run exposed, since no static band — not even a wide one — can
+  cover throughput that varies from single digits to thousands of tok/s depending on how badly a
+  model is split across CPU and GPU.
+- Presentation-only throughout, exactly as the original estimator was: no result field, fixture,
+  or derivation formula is touched by any part of this. `protocolVersion` and the pre-existing
+  parts of `scoringVersion`'s contract are unaffected by this half of the change.
+
+No fixture needed recapturing for either finding: both are derivation- and presentation-layer
+changes over data every existing fixture already carries (or, for the new optional field, simply
+lacks, which stays valid).
 
 ### `clientVersion` 0.9.0 — 2026-07-26 (§12.4 closed; the §11 gate is restored)
 

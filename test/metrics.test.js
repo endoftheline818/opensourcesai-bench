@@ -104,6 +104,53 @@ test("failed workload is retained, counted, and excluded from headline metric", 
   });
 });
 
+test("TTFT excludes reasoning-withheld nulls from median/CV and reports how many", async () => {
+  const record = await normalRecord();
+  const w2Passes = record.rawMeasurements.workloads.w2.measuredPasses;
+  assert.equal(w2Passes.length, 5);
+  // Simulate two passes where generation genuinely happened (eval_count
+  // intact) but every streamed chunk stayed inside the thinking channel, so
+  // TTFT never fired -- the case lab run 9 (2026-08-03, gemma4:31b) surfaced.
+  assert.ok(w2Passes[0].measurement.eval_count > 0);
+  w2Passes[0].measurement.timeToFirstTokenMs = null;
+  w2Passes[1].measurement.timeToFirstTokenMs = null;
+  const derived = deriveMetrics(record);
+  assert.equal(derived.timeToFirstTokenMs.reasoningWithheldPasses, 2);
+  // Before the fix, statistics.js's null-tolerant arithmetic would have kept
+  // samples at 5 and silently dragged the median toward zero instead of
+  // excluding the two withheld passes.
+  assert.equal(derived.timeToFirstTokenMs.samples, 3);
+  assert.ok(Number.isFinite(derived.timeToFirstTokenMs.median));
+});
+
+test("TTFT reports zero reasoning-withheld passes on an ordinary run", async () => {
+  const record = await normalRecord();
+  const derived = deriveMetrics(record);
+  assert.equal(derived.timeToFirstTokenMs.reasoningWithheldPasses, 0);
+  assert.equal(derived.timeToFirstTokenMs.samples, 5);
+});
+
+test("first-visible-token time is unavailable by default, including on fixtures that predate it", async () => {
+  const record = await normalRecord();
+  const derived = deriveMetrics(record);
+  assert.equal(derived.timeToFirstVisibleTokenMs.samples, 0);
+  assert.equal(derived.timeToFirstVisibleTokenMs.median, null);
+});
+
+test("first-visible-token time is derived from W4, not W2", async () => {
+  const record = await normalRecord();
+  const w4Passes = record.rawMeasurements.workloads.w4.measuredPasses;
+  const values = [140_000, 141_000, 142_000, 143_000, 144_000];
+  w4Passes.forEach((pass, index) => {
+    pass.measurement.timeToFirstVisibleTokenMs = values[index];
+  });
+  // W2 is deliberately left untouched -- confirms the stat reads from W4
+  // regardless of what W2 carries.
+  const derived = deriveMetrics(record);
+  assert.equal(derived.timeToFirstVisibleTokenMs.samples, 5);
+  assert.equal(derived.timeToFirstVisibleTokenMs.median, 142_000);
+});
+
 test("synthetic retry-then-succeed fixture separates attempt failures from pass failures", async () => {
   const record = await normalRecord("synthetic-retry-then-succeed.json");
   const derived = deriveMetrics(record);
