@@ -35,6 +35,9 @@ function response(seed) {
       },
     ],
     timeToFirstTokenMs: 200 + seed,
+    // Distinct offset from timeToFirstTokenMs so a test can tell the two
+    // fields apart rather than passing by coincidence if they were swapped.
+    timeToFirstVisibleTokenMs: 300 + seed,
   };
 }
 
@@ -170,6 +173,10 @@ test("captured fixture round-trips through the fixture loader without editing", 
     extractRawMeasurement(fixture.workloads.w2[1][1]).eval_count,
     128,
   );
+  assert.equal(
+    extractRawMeasurement(fixture.workloads.w2[0][0]).timeToFirstVisibleTokenMs,
+    302,
+  );
 
   const replayed = await runBenchmark({
     adapter: new FixtureAdapter(fixture),
@@ -272,6 +279,7 @@ test("terminal summary names captured fields, counts, redactions, and path", () 
   assert.match(summary, /showResponse\.model_info/);
   assert.match(summary, /w1=1 slots\/1 attempts/);
   assert.match(summary, /w2=6 slots\/7 attempts/);
+  assert.match(summary, /timeToFirstTokenMs, timeToFirstVisibleTokenMs/);
   assert.match(summary, /model output/i);
   assert.match(summary, /Review the fixture before committing/i);
 });

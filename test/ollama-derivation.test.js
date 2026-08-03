@@ -22,6 +22,24 @@ test("final chunk and raw counters are extracted without retaining model output"
   assert.deepEqual(response.chunks, original);
 });
 
+test("timeToFirstVisibleTokenMs is carried through when the collection result has it", () => {
+  const measurement = extractRawMeasurement({
+    chunks: [{ done: true, eval_count: 16 }],
+    timeToFirstTokenMs: 4200,
+    timeToFirstVisibleTokenMs: 142_200,
+  });
+  assert.equal(measurement.timeToFirstTokenMs, 4200);
+  assert.equal(measurement.timeToFirstVisibleTokenMs, 142_200);
+});
+
+test("timeToFirstVisibleTokenMs stays null when absent, including on fixtures predating the field", async () => {
+  const fixture = await loadFixture("synthetic-normal.json");
+  const response = fixture.workloads.w2[0][0];
+  assert.equal("timeToFirstVisibleTokenMs" in response, false);
+  const measurement = extractRawMeasurement(response);
+  assert.equal(measurement.timeToFirstVisibleTokenMs, null);
+});
+
 test("/api/show architecture metadata is retained but KV projection stays unavailable without resolved element type", () => {
   const metadata = extractKvCacheMetadata({
     model_info: {

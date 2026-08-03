@@ -19,6 +19,12 @@ export function extractRawMeasurement(collectionResult) {
   }
   measurement.timeToFirstTokenMs =
     collectionResult.timeToFirstTokenMs ?? null;
+  // Optional: absent on any collection result captured before this field
+  // existed (including every committed fixture predating it), and null
+  // stays a fully valid value — see the adapter's streamedChunkHasVisibleToken
+  // comment for what distinguishes this from timeToFirstTokenMs.
+  measurement.timeToFirstVisibleTokenMs =
+    collectionResult.timeToFirstVisibleTokenMs ?? null;
   return measurement;
 }
 

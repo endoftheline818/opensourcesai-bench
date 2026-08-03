@@ -32,61 +32,189 @@ function progress(callback, message) {
   callback?.(message);
 }
 
-// Presentation-only planning band used to turn the configured token schedule
-// into a deliberately broad wall-clock range. It is not a performance target
-// and never enters a result record or derivation.
-const ESTIMATE_TOKENS_PER_SECOND_RANGE = Object.freeze({
+// Presentation-only planning bands used to turn the configured token schedule
+// into a deliberately broad wall-clock range. Neither is a performance target
+// and neither ever enters a result record or derivation.
+//
+// Two separate bands, not one, because prefill and generation are different
+// throughput regimes -- the same distinction the roofline model already
+// treats as load-bearing (see ROOFLINE_LIMITS: "Applies to generation only").
+// A single shared band systematically mis-estimates in both directions: on
+// real hardware in this project's own validation lab, prefill ran 65-76x
+// faster than generation on the very same run (lab run 9, 2026-08-03:
+// 177.63 vs 2.34 tok/s), so summing prompt-processing tokens and completion
+// tokens under one rate either drowns the fast component in a slow
+// assumption (inflating the estimate for an ordinary well-provisioned run to
+// several times its real duration) or drowns the slow component in a fast
+// one (deflating it for an offload-bound run to a fraction of its real
+// duration -- the estimator undershot lab run 9's real ~30-minute run by
+// about 4x). Splitting the pools fixes both directions at once.
+const GENERATION_TOKENS_PER_SECOND_RANGE = Object.freeze({
   slow: 50,
   fast: 200,
+});
+// Grounded in every real-hardware prefill figure on record as of 2026-08:
+// 177.63-9,353 tok/s across an RTX 3080 and an RTX 4070 Ti, four model
+// families, including the severe-offload case above. The floor sits below
+// the worst of those on purpose -- prefill is compute-bound and degrades
+// under contention too, just less catastrophically than generation -- and
+// the ceiling sits below the best of those, staying conservative rather
+// than optimizing for the fastest configuration ever measured.
+const PREFILL_TOKENS_PER_SECOND_RANGE = Object.freeze({
+  slow: 100,
+  fast: 5000,
 });
 
 function displayMinutes(seconds) {
   return Math.max(1, Math.round(seconds / 60));
 }
 
-export function estimateRunDuration(workloads = WORKLOADS) {
+// The two token pools every workload decomposes into: prompt-processing
+// tokens (governed by prefill throughput) and completion tokens (governed by
+// generation throughput). Shared by the baseline estimate and the live
+// reprojection below so both reason about the schedule identically.
+function tokenPools(workloads) {
   let scheduledPasses = 0;
-  let configuredTokens = 0;
-  const workloadTokens = {};
+  let prefillTokens = 0;
+  let generationTokens = 0;
+  const workloadSecondsAtSlowBand = {};
   for (const [id, workload] of Object.entries(workloads)) {
     const requests = workload.warmups + workload.repetitions;
-    // Planning figure only: the midpoint of the workload's accepted token band.
-    // Never a validity input and never recorded — it exists solely to turn the
-    // configured schedule into a wall-clock range.
+    // Planning figure only: the midpoint of the workload's accepted token
+    // band. Never a validity input and never recorded.
     const bandMidpoint = workload.promptTokenRange
       ? (workload.promptTokenRange.min + workload.promptTokenRange.max) / 2
       : 0;
-    const tokensPerRequest = bandMidpoint + workload.numPredict;
-    const tokens = requests * tokensPerRequest;
+    const workloadPrefillTokens = requests * bandMidpoint;
+    const workloadGenerationTokens = requests * workload.numPredict;
     scheduledPasses += requests;
-    configuredTokens += tokens;
-    workloadTokens[id] = tokens;
+    prefillTokens += workloadPrefillTokens;
+    generationTokens += workloadGenerationTokens;
+    // Pessimistic (slow-band) wall-clock contribution, not raw token count --
+    // which workload actually threatens to dominate real duration under
+    // adverse conditions is not the same question as which one has the most
+    // scheduled tokens, since prefill tokens are processed far faster than
+    // generation tokens regardless of hardware.
+    workloadSecondsAtSlowBand[id] =
+      workloadPrefillTokens / PREFILL_TOKENS_PER_SECOND_RANGE.slow +
+      workloadGenerationTokens / GENERATION_TOKENS_PER_SECOND_RANGE.slow;
   }
-  const fastestSeconds =
-    configuredTokens / ESTIMATE_TOKENS_PER_SECOND_RANGE.fast;
-  const slowestSeconds =
-    configuredTokens / ESTIMATE_TOKENS_PER_SECOND_RANGE.slow;
   return {
     scheduledPasses,
-    configuredTokens,
+    prefillTokens,
+    generationTokens,
+    dominantWorkload:
+      Object.entries(workloadSecondsAtSlowBand).sort(
+        (left, right) => right[1] - left[1],
+      )[0]?.[0] ?? null,
+  };
+}
+
+export function estimateRunDuration(workloads = WORKLOADS) {
+  const pools = tokenPools(workloads);
+  const fastestSeconds =
+    pools.prefillTokens / PREFILL_TOKENS_PER_SECOND_RANGE.fast +
+    pools.generationTokens / GENERATION_TOKENS_PER_SECOND_RANGE.fast;
+  const slowestSeconds =
+    pools.prefillTokens / PREFILL_TOKENS_PER_SECOND_RANGE.slow +
+    pools.generationTokens / GENERATION_TOKENS_PER_SECOND_RANGE.slow;
+  return {
+    scheduledPasses: pools.scheduledPasses,
+    configuredPrefillTokens: pools.prefillTokens,
+    configuredGenerationTokens: pools.generationTokens,
     estimatedMinutes: {
       minimum: displayMinutes(fastestSeconds),
       maximum: displayMinutes(slowestSeconds),
     },
-    dominantWorkload: Object.entries(workloadTokens).sort(
-      (left, right) => right[1] - left[1],
-    )[0]?.[0] ?? null,
+    dominantWorkload: pools.dominantWorkload,
   };
+}
+
+// Recomputes the same two-pool estimate using OBSERVED rates from a real
+// measured pass in place of the static bands -- a single point figure, not a
+// range, because a real measurement is not a guess. Either rate may be
+// unavailable (falls back to that pool's slow-band assumption) but not both,
+// since the caller already checked at least one is finite before calling
+// this.
+function reviseEstimateFromObservedRates(
+  { generationTokensPerSecond, prefillTokensPerSecond },
+  workloads = WORKLOADS,
+) {
+  const pools = tokenPools(workloads);
+  const generationRate =
+    Number.isFinite(generationTokensPerSecond) && generationTokensPerSecond > 0
+      ? generationTokensPerSecond
+      : GENERATION_TOKENS_PER_SECOND_RANGE.slow;
+  const prefillRate =
+    Number.isFinite(prefillTokensPerSecond) && prefillTokensPerSecond > 0
+      ? prefillTokensPerSecond
+      : PREFILL_TOKENS_PER_SECOND_RANGE.slow;
+  const totalSeconds =
+    pools.prefillTokens / prefillRate + pools.generationTokens / generationRate;
+  return displayMinutes(totalSeconds);
+}
+
+function minutesPhrase(minutes) {
+  return `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 function durationEstimateMessages() {
   const estimate = estimateRunDuration();
-  return [
-    `Estimated run time: about ${estimate.estimatedMinutes.minimum}-${estimate.estimatedMinutes.maximum} minutes ` +
-      `for ${estimate.scheduledPasses} scheduled workload passes ` +
+  const dominant = WORKLOADS[estimate.dominantWorkload];
+  const range =
+    estimate.estimatedMinutes.minimum === estimate.estimatedMinutes.maximum
+      ? minutesPhrase(estimate.estimatedMinutes.minimum)
+      : `about ${estimate.estimatedMinutes.minimum}-${estimate.estimatedMinutes.maximum} minutes`;
+  const messages = [
+    `Estimated run time: ${range} for ${estimate.scheduledPasses} scheduled workload passes ` +
       "(hardware-dependent; retries can extend it).",
-    `W3 dominates the configured work at num_ctx = ${WORKLOADS.w3.numCtx}.`,
   ];
+  if (dominant) {
+    messages.push(
+      `${dominant.id.toUpperCase()} (${dominant.name}) dominates the configured work at num_ctx = ${dominant.numCtx}.`,
+    );
+  }
+  return messages;
+}
+
+// Fires at most once per run, after the first real measured pass, and only
+// when the observed pace projects a total meaningfully worse than the
+// baseline estimate's own upper bound already promised -- so a healthy run
+// stays silent and only a genuinely surprising one gets a second number.
+// Deliberately a single revised TOTAL, not a "remaining time" calculation:
+// avoids needing to track completed-vs-remaining scheduled work precisely,
+// and the user can subtract elapsed time themselves exactly as they would
+// for the original estimate.
+function createEstimateReviser(onProgress) {
+  let alreadyRevised = false;
+  return function maybeReviseEstimate(measurement) {
+    if (alreadyRevised) return;
+    const generationRate =
+      Number.isFinite(measurement.eval_count) &&
+      Number.isFinite(measurement.eval_duration) &&
+      measurement.eval_duration > 0
+        ? measurement.eval_count / (measurement.eval_duration / 1e9)
+        : null;
+    const prefillRate =
+      Number.isFinite(measurement.prompt_eval_count) &&
+      Number.isFinite(measurement.prompt_eval_duration) &&
+      measurement.prompt_eval_duration > 0
+        ? measurement.prompt_eval_count / (measurement.prompt_eval_duration / 1e9)
+        : null;
+    if (generationRate === null && prefillRate === null) return;
+    const original = estimateRunDuration();
+    const revisedMinutes = reviseEstimateFromObservedRates({
+      generationTokensPerSecond: generationRate,
+      prefillTokensPerSecond: prefillRate,
+    });
+    if (revisedMinutes <= original.estimatedMinutes.maximum) return;
+    alreadyRevised = true;
+    progress(
+      onProgress,
+      `Revised estimate based on your first measured pass: ${minutesPhrase(revisedMinutes)} total ` +
+        "(measured pace, not a performance claim).",
+    );
+  };
 }
 
 function sanitizeSystem(system, freeVramBytesAtLoad = null) {
@@ -195,6 +323,7 @@ async function runRepeatedWorkload(
   model,
   onProgress,
   captureResponses,
+  onFirstMeasuredPass,
 ) {
   const workload = { ...definition, model };
   const nextCallIndex = createCallCounter();
@@ -207,16 +336,19 @@ async function runRepeatedWorkload(
   const warmup = extractRawMeasurement(warmupRaw);
   const measuredPasses = [];
   for (let index = 1; index <= workload.repetitions; index += 1) {
-    measuredPasses.push(
-      await measuredPass(
-        adapter,
-        workload,
-        index,
-        onProgress,
-        captureResponses,
-        nextCallIndex,
-      ),
+    const pass = await measuredPass(
+      adapter,
+      workload,
+      index,
+      onProgress,
+      captureResponses,
+      nextCallIndex,
     );
+    measuredPasses.push(pass);
+    // The measurement's wall-clock timing is usable for a duration estimate
+    // regardless of §4 validity -- a pass that gets retried for a slightly
+    // off prompt token count still took the time it took.
+    if (index === 1) onFirstMeasuredPass?.(pass.measurement);
   }
   return {
     warmup,
@@ -328,6 +460,7 @@ export async function runBenchmark({
   );
   const atLoad = await adapter.collectSystemSnapshot();
 
+  const reviseEstimate = createEstimateReviser(onProgress);
   for (const id of ["w2", "w3", "w4"]) {
     rawMeasurements.workloads[id] = await runRepeatedWorkload(
       adapter,
@@ -335,6 +468,7 @@ export async function runBenchmark({
       model,
       onProgress,
       captureWorkloads?.[id],
+      reviseEstimate,
     );
   }
 

@@ -185,6 +185,10 @@ function sanitizedWorkloadResponse(response) {
       typeof response?.timeToFirstTokenMs === "number"
         ? response.timeToFirstTokenMs
         : null,
+    timeToFirstVisibleTokenMs:
+      typeof response?.timeToFirstVisibleTokenMs === "number"
+        ? response.timeToFirstVisibleTokenMs
+        : null,
   };
 }
 
@@ -313,7 +317,7 @@ export function renderFixtureCaptureSummary({ outputPath, fixture }) {
     ...(fixture.psResponse
       ? [`- psResponse: ${keys(fixture.psResponse)}`]
       : ["- psResponse: not reported by the runtime at snapshot time"]),
-    `- workload response: chunks[0] (${keys(finalChunk)}), timeToFirstTokenMs`,
+    `- workload response: chunks[0] (${keys(finalChunk)}), timeToFirstTokenMs, timeToFirstVisibleTokenMs`,
     `- workload slots/attempts: ${Object.entries(fixture.workloads)
       .map(
         ([id, slots]) =>

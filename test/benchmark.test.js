@@ -178,7 +178,7 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.derived.attemptFailureRate.percent, 0);
   assert.equal(record.protocolVersion, "osai-bench/1.3");
   assert.equal(record.clientVersion, CLIENT_VERSION);
-  assert.equal(record.scoringVersion, "osai-bench-derive/1.3");
+  assert.equal(record.scoringVersion, "osai-bench-derive/1.4");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });
 
@@ -258,11 +258,15 @@ test("fixture capture side channel preserves ordered attempts per scheduled slot
   );
 });
 
-test("duration estimate follows the configured schedule and identifies W3", () => {
+test("duration estimate follows the configured schedule, splitting prefill and generation token pools", () => {
+  // 18,789 prefill tokens + 3,847 generation tokens = 22,636 total -- the
+  // same combined figure the single-pool estimator used to report, now
+  // decomposed rather than summed under one shared rate.
   assert.deepEqual(estimateRunDuration(), {
     scheduledPasses: 19,
-    configuredTokens: 22_636,
-    estimatedMinutes: { minimum: 2, maximum: 8 },
+    configuredPrefillTokens: 18_789,
+    configuredGenerationTokens: 3_847,
+    estimatedMinutes: { minimum: 1, maximum: 4 },
     dominantWorkload: "w3",
   });
 });
@@ -283,6 +287,129 @@ test("duration estimate is printed before the first workload", async () => {
   assert.ok(estimateIndex >= 0);
   assert.ok(firstWorkloadIndex > estimateIndex);
   assert.match(messages[estimateIndex + 1], /W3.*dominates.*num_ctx = 4096/i);
+});
+
+// A minimal adapter, independent of FakeAdapter, so its generate() can
+// report exact per-workload durations without inheriting FakeAdapter's own
+// retry/capture bookkeeping. FakeAdapter's default timings are themselves
+// unrealistic for prefill (a flat 1 second for a ~42-token prompt is ~42
+// tok/s, below even this module's pessimistic 100 tok/s floor) -- fine for
+// every OTHER test, which never inspects onProgress for a revision message,
+// but wrong for these two, which need to distinguish "genuinely healthy"
+// from "genuinely offloaded" on purpose.
+function ratedAdapter({ generationTokensPerSecond, prefillTokensPerSecond }) {
+  const calls = { w1: 0, w2: 0, w3: 0, w4: 0, forceUnload: 0 };
+  return {
+    calls,
+    async checkPreconditions() {
+      return { issues: [], system: systemSnapshot(), rawRunningModels: { models: [] } };
+    },
+    async listModels() {
+      return {
+        models: [
+          {
+            name: "fixture:8b",
+            size: 5_000_000_000,
+            digest: "sha256:fixture",
+            details: { family: "fixture", parameter_size: "8B", quantization_level: "Q4_K_M" },
+          },
+        ],
+      };
+    },
+    async detect() {
+      return { available: true, raw: { version: "0.30.10" } };
+    },
+    async showModel() {
+      return { details: { family: "fixture", parameter_size: "8B", quantization_level: "Q4_K_M" } };
+    },
+    async forceUnload() {
+      calls.forceUnload += 1;
+      return { chunks: [{ done: true }], timeToFirstTokenMs: null };
+    },
+    async collectSystemSnapshot() {
+      return systemSnapshot();
+    },
+    async listRunningModels() {
+      return { models: [] };
+    },
+    async generate(_model, workload) {
+      calls[workload.id] += 1;
+      const promptCount = workload.promptTokenRange
+        ? Math.floor((workload.promptTokenRange.min + workload.promptTokenRange.max) / 2)
+        : 5;
+      const evalCount = workload.numPredict;
+      return {
+        chunks: [
+          {
+            response: "ok",
+            done: true,
+            total_duration: 1,
+            load_duration: 1_000_000_000,
+            prompt_eval_count: promptCount,
+            prompt_eval_duration: Math.round(
+              (promptCount / prefillTokensPerSecond) * 1e9,
+            ),
+            eval_count: evalCount,
+            eval_duration: Math.round(
+              (evalCount / generationTokensPerSecond) * 1e9,
+            ),
+          },
+        ],
+        timeToFirstTokenMs: 200,
+      };
+    },
+  };
+}
+
+test("a revised estimate is printed once real throughput turns out far worse than the baseline promised", async () => {
+  // Rates modeled directly on lab run 9 (2026-08-03, gemma4:31b, severe
+  // CPU/GPU split-mode offload): 2.34 tok/s generation, 177.63 tok/s prefill.
+  const adapter = ratedAdapter({
+    generationTokensPerSecond: 2.34,
+    prefillTokensPerSecond: 177.63,
+  });
+  const messages = [];
+  await runBenchmark({
+    adapter,
+    model: "fixture:8b",
+    onProgress: (message) => messages.push(message),
+  });
+  const revisions = messages.filter((message) =>
+    message.startsWith("Revised estimate based on your first measured pass:"),
+  );
+  assert.equal(
+    revisions.length,
+    1,
+    "must fire exactly once, not once per remaining workload",
+  );
+  assert.match(revisions[0], /measured pace, not a performance claim/);
+  // It fires after W2's first measured pass specifically, not before.
+  const revisionIndex = messages.indexOf(revisions[0]);
+  const w2FirstPassIndex = messages.findIndex((message) =>
+    message.startsWith("Short-prompt latency: measured pass 1/"),
+  );
+  assert.ok(w2FirstPassIndex >= 0);
+  assert.ok(revisionIndex > w2FirstPassIndex);
+});
+
+test("no revised estimate is printed when the first measured pass is unremarkable", async () => {
+  // Rates modeled on a clean rig run (lab run 6, 2026-08-01, qwen3:8b):
+  // 114.73 tok/s generation, 4,388 tok/s prefill -- comfortably inside both
+  // planning bands, so the baseline estimate should already cover it.
+  const adapter = ratedAdapter({
+    generationTokensPerSecond: 114.73,
+    prefillTokensPerSecond: 4388,
+  });
+  const messages = [];
+  await runBenchmark({
+    adapter,
+    model: "fixture:8b",
+    onProgress: (message) => messages.push(message),
+  });
+  assert.equal(
+    messages.some((message) => message.startsWith("Revised estimate")),
+    false,
+  );
 });
 
 test("invalid measured pass retries and retains every attempt", async () => {
