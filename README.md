@@ -1,6 +1,6 @@
 # @opensourcesai/bench
 
-A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.6.0`
+A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.11.0`
 implements the draft `osai-bench/1.3` measurement protocol. Records produced
 under `osai-bench/1` and `osai-bench/1.3` must never be pooled.
 
