@@ -89,13 +89,14 @@ protocol freeze. Do not publish before it passes.
 ## Working conventions
 
 - Branch and open a PR (`feat/`, `fix/`, `docs/`, `chore/` + kebab slug). Do not push to `main`
-  and do not force-push. The founder merges.
-- Do not add AI attribution or co-author trailers to commits.
+  and do not force-push. A maintainer merges.
 - Commit messages record *why*, not just *what* — the reasoning behind a measurement decision is
   the most valuable thing in this repository's history.
 - `package.json` must carry `"publishConfig": { "access": "public" }`. Scoped packages default to
   private and the first publish fails without it.
-- Do not publish to npm from a session. Releases are a deliberate founder action.
+- Never run `npm publish` by hand. Releases are tag-driven: pushing a `v*.*.*` tag that matches
+  the `package.json` version is the entire release action, and the workflow publishes with npm
+  OIDC. Nothing publishes from a branch.
 
 ## Relationship to opensourcesai.com
 

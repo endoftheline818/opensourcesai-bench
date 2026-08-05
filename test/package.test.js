@@ -23,6 +23,22 @@ test("package is public-scoped, executable, dependency-free, and version-aligned
   assert.equal(packageJson.devDependencies, undefined);
 });
 
+// README.md is shipped in the `files` allowlist, so a stale version line here is
+// wrong on the npmjs.com package page as well as on GitHub. package.json and
+// src/version.js were already locked to each other above; the README was not, and
+// drifted five minor versions (it still claimed 0.6.0 at 0.11.0) before anyone
+// noticed. This closes that gap rather than relying on the release checklist.
+test("README declares the shipped version", async () => {
+  const readme = await readFile(path.join(root, "README.md"), "utf8");
+  const declared = readme.match(/^A local LLM inference benchmark .*Version `([^`]+)`/ms);
+  assert.ok(declared, "README must state the version it documents in its opening paragraph");
+  assert.equal(
+    declared[1],
+    CLIENT_VERSION,
+    `README documents ${declared[1]} but the package ships ${CLIENT_VERSION}`,
+  );
+});
+
 test("result schema accepts only protocol 1.1 records", async () => {
   const schema = JSON.parse(
     await readFile(path.join(root, "schema", "result-v1.schema.json"), "utf8"),
