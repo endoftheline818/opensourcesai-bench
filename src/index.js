@@ -15,7 +15,7 @@ export {
   renderFixtureCaptureSummary,
   writeFixtureCapture,
 } from "./output/fixture-writer.js";
-export { writeResult } from "./output/writer.js";
+export { defaultResultsDirectory, writeResult } from "./output/writer.js";
 export {
   PROTOCOL_VERSION,
   SCORING_VERSION,

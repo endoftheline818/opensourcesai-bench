@@ -23,7 +23,9 @@ Options:
   --model <name>                 Select an installed model non-interactively
   --memory-bandwidth <GB/s>      Override auto-detected GPU memory bandwidth
   --quality-override             Run despite detected quality preconditions
-  --output <path>                Result JSON path (must not already exist)
+  --output <path>                Result JSON path (must not already exist).
+                                 Default: a timestamped file in
+                                 ~/.osai/bench-results/
   --capture-fixture <path>       Also save a real-hardware fixture (no overwrite)
   --fixture-label <text>         Required label for --capture-fixture
   --help                         Show this help

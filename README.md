@@ -1,6 +1,6 @@
 # @opensourcesai/bench
 
-A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.11.0`
+A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.12.0`
 implements the draft `osai-bench/1.3` measurement protocol. Records produced
 under `osai-bench/1` and `osai-bench/1.3` must never be pooled.
 
@@ -47,7 +47,12 @@ The interactive flow:
 6. prints a workload-count-based duration estimate;
 7. runs the four protocol workloads in order;
 8. prints a human-readable report; and
-9. writes a JSON result in the current directory.
+9. writes a JSON result into `~/.osai/bench-results/` (or the exact path given
+   with `--output`). A known location rather than the working directory, so a
+   result outlives the terminal session that produced it and local tools — the
+   OpenSourcesAI Command Center among them — can offer to open it without
+   being told where it went. Nothing ever reads the directory back during a
+   run; it is a destination, not state.
 
 For automation:
 
