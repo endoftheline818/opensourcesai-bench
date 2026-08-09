@@ -93,3 +93,42 @@ test("model entries reported only as `model` rather than `name` still resolve", 
   const models = [{ model: "qwen2.5:7b" }];
   assert.equal(resolveInstalledModel(models, "qwen2.5:7b"), "qwen2.5:7b");
 });
+
+// --- refusal guidance must be followable -------------------------------------
+//
+// Introduced alongside the §3 platform precondition (#24). Every §4 condition
+// before it was clearable by the operator, so "resolve these conditions and
+// retry" was always sound. It is not sound for a platform condition, and
+// unfollowable advice is worse than terse advice.
+
+test("a resolvable refusal still tells the operator to resolve and retry", () => {
+  const text = __test.refusalGuidance([
+    { code: "on-battery", message: "System is running on battery power" },
+  ]);
+  assert.match(text, /Resolve these conditions and retry/);
+  assert.match(text, /--quality-override/);
+});
+
+test("an unresolvable refusal does not tell the operator to resolve it", () => {
+  const text = __test.refusalGuidance([
+    { code: "unsupported-platform", resolvable: false, message: "…" },
+  ]);
+  assert.doesNotMatch(text, /Resolve these conditions and retry/);
+  assert.match(text, /Retrying will not clear this/);
+  assert.match(text, /--quality-override/);
+  // The measurements are not the problem — say so, or a first-time Mac user
+  // reasonably concludes the tool does not work on their machine.
+  assert.match(text, /without discarding your numbers/);
+});
+
+test("one unresolvable condition makes the whole retry futile, even beside a clearable one", () => {
+  // The mixed case is the one a naive `every`/count-based check gets wrong: a
+  // Mac with a stray model loaded has a condition the operator CAN clear, but
+  // retrying still cannot produce a clean run.
+  const text = __test.refusalGuidance([
+    { code: "different-model-loaded", message: "…" },
+    { code: "unsupported-platform", resolvable: false, message: "…" },
+  ]);
+  assert.match(text, /Retrying will not clear this/);
+  assert.doesNotMatch(text, /Resolve these conditions and retry/);
+});
