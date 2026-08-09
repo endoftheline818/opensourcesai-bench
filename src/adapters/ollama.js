@@ -504,10 +504,20 @@ function modelIndependentIssues(system) {
   if (!SUPPORTED_PLATFORMS.includes(process.platform)) {
     issues.push({
       code: "unsupported-platform",
+      // Every other §4 condition is something the operator can clear: unplug the
+      // laptop, close the competing process, unload the model. This one is not —
+      // you cannot stop being on macOS — so the CLI must not answer it with
+      // "resolve these conditions and retry", the advice it gives for all the
+      // others and which is unfollowable here. Consumed by the refusal renderer
+      // only; publicQualityConditions() serializes code + detected, so this
+      // field never reaches the record.
+      resolvable: false,
       message:
         `Platform "${process.platform}" is outside ${PROTOCOL_VERSION} §3 ` +
         `(${SUPPORTED_PLATFORMS.join(", ")}); GPU detection and the run-quality ` +
-        `preconditions do not apply here, so the run cannot be quality-assured`,
+        `preconditions do not apply here, so the run cannot be quality-assured. ` +
+        `The measurements themselves may well be fine — what is missing is the ` +
+        `evidence needed to certify them`,
     });
   }
 

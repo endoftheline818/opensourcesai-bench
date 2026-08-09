@@ -38,6 +38,28 @@ The CLI makes no external network calls. Its only HTTP connection is to
 Ollama at http://127.0.0.1:11434.`;
 }
 
+// "Resolve these conditions and retry" was the only guidance a refused run ever
+// gave, and it was sound for all four original §4 conditions: every one clears
+// if the operator changes something — unplug, close the process, unload the
+// model. The platform condition (§3's OS row, client 0.13.0) does not. Telling
+// a macOS user to resolve and retry sends them hunting for a fix that cannot
+// exist, and buries the one action that works.
+//
+// Any unresolvable issue makes the whole retry futile, not just its own line —
+// so this keys on `some`, not on `every`. A Mac with a stray model loaded has
+// one clearable condition and one that never clears; retrying still cannot
+// produce a clean run, and the guidance has to say so.
+function refusalGuidance(issues) {
+  const unresolvable = issues.some((issue) => issue.resolvable === false);
+  return unresolvable
+    ? "\nRetrying will not clear this — it is a property of the machine, not of its current " +
+        "state. To measure anyway, rerun with --quality-override: the run proceeds normally and " +
+        "the JSON is permanently marked cohort-ineligible, which keeps it out of comparisons " +
+        "without discarding your numbers.\n"
+    : "\nResolve these conditions and retry. To preserve a knowingly non-standard run, " +
+        "rerun with --quality-override; the JSON will be permanently marked and cohort-ineligible.\n";
+}
+
 function parseArguments(argv) {
   const result = {
     model: null,
@@ -257,10 +279,7 @@ export async function main(argv = process.argv.slice(2)) {
       for (const issue of error.issues) {
         process.stderr.write(`- ${issue.message}\n`);
       }
-      process.stderr.write(
-        "\nResolve these conditions and retry. To preserve a knowingly non-standard run, " +
-          "rerun with --quality-override; the JSON will be permanently marked and cohort-ineligible.\n",
-      );
+      process.stderr.write(refusalGuidance(error.issues));
       return 3;
     }
     process.stderr.write(`${error.message}\n`);
@@ -279,4 +298,4 @@ if (
   process.exitCode = await main();
 }
 
-export const __test = { parseArguments, usage };
+export const __test = { parseArguments, usage, refusalGuidance };

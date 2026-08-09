@@ -207,3 +207,25 @@ test("#24 must not regress: supported platforms raise no platform condition", ()
     );
   }
 });
+
+test("#24: the platform issue declares itself unresolvable, so the CLI can say so", () => {
+  // The wiring, not the logic. cli.test.js proves refusalGuidance() reacts
+  // correctly to `resolvable: false`; nothing proved the real issue actually
+  // carries it. Mutation testing found this gap: deleting the flag from the
+  // adapter left every test green while sending Mac users back to
+  // "resolve these conditions and retry", which is the defect it fixes.
+  const [issue] = withPlatform("darwin", () =>
+    __test.modelIndependentIssues(cleanSystem),
+  );
+  assert.equal(issue.code, "unsupported-platform");
+  assert.equal(issue.resolvable, false);
+});
+
+test("#24: resolvable conditions stay unflagged, so their guidance is unchanged", () => {
+  const issues = withPlatform("linux", () =>
+    __test.modelIndependentIssues({ ...cleanSystem, power: { onBattery: true } }),
+  );
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, "on-battery");
+  assert.equal(issues[0].resolvable, undefined);
+});
