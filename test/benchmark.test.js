@@ -178,7 +178,7 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
   assert.equal(record.derived.attemptFailureRate.percent, 0);
   assert.equal(record.protocolVersion, "osai-bench/1.3");
   assert.equal(record.clientVersion, CLIENT_VERSION);
-  assert.equal(record.scoringVersion, "osai-bench-derive/1.4");
+  assert.equal(record.scoringVersion, "osai-bench-derive/1.5");
   assert.equal(JSON.stringify(record).includes("not persisted"), false);
 });
 

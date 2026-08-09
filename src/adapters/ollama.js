@@ -9,6 +9,7 @@ import {
   FIXED_OPTIONS,
   NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB,
   PROTOCOL_VERSION,
+  SUPPORTED_PLATFORMS,
 } from "../protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -490,6 +491,26 @@ function isOllamaProcess(processName) {
 
 function modelIndependentIssues(system) {
   const issues = [];
+
+  // §3 scopes v1 to Windows and Linux, but nothing enforced it: every other §4
+  // precondition is built on nvidia-smi, which simply no-ops on darwin. A macOS
+  // run therefore completed with an empty conditions list and `cohortEligible:
+  // true` — indistinguishable, in every field a consumer keys on, from a
+  // protocol-grade run (opensourcesai-bench#24).
+  //
+  // Placed first because it is the only condition that is true before any
+  // hardware is inspected, and because on an unsupported platform the readings
+  // the other checks rely on are themselves unavailable rather than clean.
+  if (!SUPPORTED_PLATFORMS.includes(process.platform)) {
+    issues.push({
+      code: "unsupported-platform",
+      message:
+        `Platform "${process.platform}" is outside ${PROTOCOL_VERSION} §3 ` +
+        `(${SUPPORTED_PLATFORMS.join(", ")}); GPU detection and the run-quality ` +
+        `preconditions do not apply here, so the run cannot be quality-assured`,
+    });
+  }
+
   if (system.power.onBattery === true) {
     issues.push({
       code: "on-battery",

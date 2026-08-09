@@ -1,5 +1,21 @@
 export const PROTOCOL_VERSION = "osai-bench/1.3";
-export const SCORING_VERSION = "osai-bench-derive/1.4";
+// 1.5: placement diagnostics no longer assert "CPU-only" when the runtime
+// reports the model resident in device memory but our nvidia-smi-only detector
+// found no GPU. Derivation rules changed; measurement semantics did not.
+export const SCORING_VERSION = "osai-bench-derive/1.5";
+
+// §3's OS row, enforced. Named here rather than inline so the spec table and
+// the check cannot drift apart.
+//
+// This is enforcement of a scope limit §3 has always documented, expressed
+// through the §4 refuse/override machinery that already exists — no workload,
+// fixed parameter, or timing rule changes, which is why PROTOCOL_VERSION stays
+// at 1.3. That matters concretely: opensourcesai-cmdcenter pins
+// ACCEPTED_PROTOCOL_VERSIONS = ["osai-bench/1.3"] and refuses anything else, so
+// a gratuitous protocol bump would make every new result unreadable there until
+// that package is re-released. Bump it when measurement semantics change (as
+// 1.2 and 1.3 did), not when a documented limit gains a guard.
+export const SUPPORTED_PLATFORMS = Object.freeze(["win32", "linux"]);
 
 export const REPETITIONS = 5;
 export const WARMUP_PASSES = 1;

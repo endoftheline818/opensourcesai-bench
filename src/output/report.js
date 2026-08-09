@@ -119,7 +119,14 @@ export function renderReport(record) {
         ? `${record.system.gpu.model} (${number(
             record.system.gpu.totalVramBytes / 1024 ** 3,
           )} GiB VRAM, driver ${record.system.gpu.driverVersion ?? "unknown"})`
-        : "CPU-only (no supported discrete GPU detected)"
+        : // Same correction as the placement diagnostics: printing "CPU-only" on
+          // a run the runtime reports as device-resident is the single most
+          // visible form of the #24 mislabel, because this line is what a user
+          // reads and quotes. Keyed off the runtime's own figure, so a genuinely
+          // GPU-less machine (size_vram 0) still prints CPU-only.
+          (record.runtime?.offloadPlacement?.vramResidentBytes ?? 0) > 0
+          ? "not detected (nvidia-smi only) — but the runtime reports the model resident in device memory, so this run is not CPU-only"
+          : "CPU-only (no supported discrete GPU detected)"
     }`,
     `- Quantization: ${record.model.quantization ?? "unknown"}`,
     `- Parameter size: ${record.model.parameterSize ?? "unknown"}`,

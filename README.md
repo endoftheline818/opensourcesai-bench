@@ -1,8 +1,14 @@
 # @opensourcesai/bench
 
-A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.12.0`
+A local LLM inference benchmark for Ollama on Windows and Linux. Version `0.13.0`
 implements the draft `osai-bench/1.3` measurement protocol. Records produced
 under `osai-bench/1` and `osai-bench/1.3` must never be pooled.
+
+Windows and Linux is a real limit, not a packaging note: from `0.13.0` the client
+**refuses** on any other platform, naming the condition, because GPU detection and
+every run-quality precondition are `nvidia-smi`-based and cannot vouch for a run
+elsewhere. `--quality-override` still runs it, and permanently marks the record
+cohort-ineligible.
 
 The package reports separate measurements. It does not create a composite
 score, grade, asserted target, or “well-configured” threshold.

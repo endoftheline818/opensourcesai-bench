@@ -64,6 +64,13 @@ Multi-GPU, Apple Silicon unified memory, and other runtimes (LM Studio, llama.cp
 GPUStack) are out of scope for v1. The adapter interface (§10) is shaped to accept them
 without a protocol revision, provided they expose equivalent timing data.
 
+**The OS row is enforced as of client 0.13.0.** It previously was not: every §4 precondition
+is built on `nvidia-smi`, which no-ops elsewhere, so a macOS run completed with an empty
+conditions list and `cohortEligible: true` — indistinguishable, in every field a consumer
+keys on, from a protocol-grade run. §4 now carries an explicit platform condition; an
+out-of-scope platform is refused rather than silently accepted, and stays runnable through
+the override flag, which marks the record cohort-ineligible.
+
 ---
 
 ## 4. Run-quality preconditions
@@ -73,10 +80,17 @@ Data quality is enforced at collection, not modelled around later. A run is **re
 
 | Condition | Rationale |
 |---|---|
+| Platform outside §3's OS row | GPU detection and every condition below are `nvidia-smi`-based and do not apply, so the run cannot be quality-assured |
 | System on battery power | Power limits distort throughput unpredictably |
 | Pre-existing GPU utilization > 10% at check time | Another workload is competing |
 | Pre-existing GPU memory in use by a non-Ollama process above a threshold | Contention and reduced available VRAM |
 | Ollama reports a model already loaded that is not the target model | Cold-load timing invalid |
+
+The platform condition is checked first and independently of any hardware reading, because
+on an out-of-scope platform the readings the others depend on are absent rather than clean.
+A GPU-less **Windows or Linux** machine is explicitly *not* caught by it: CPU-only is an
+in-scope accelerator per §3, and its label there is correct. The distinguishing fact is the
+platform, not the absent GPU.
 
 Refusal must state the specific condition and be overridable only by an explicit flag that
 **marks the record permanently as `qualityOverride: true`**. Overridden records are excluded
@@ -333,6 +347,27 @@ independently verifiable and independently actionable:
 The partial-offload condition deliberately excludes both endpoints: nothing on the host is full
 GPU offload, while everything on the host is CPU-only execution and belongs to the separate
 CPU-only diagnostic.
+
+### 7.3 "No GPU detected" is not "CPU-only" (scoring 1.5)
+
+GPU detection is `nvidia-smi`-only, so a machine with any other accelerator reports
+`system.gpu.present: false`. That is a fact about the **detector**, not about where the model
+executed — and the runtime already reports where it executed. Through scoring 1.4 the
+placement diagnostics short-circuited on `gpu.present` and asserted *"the run is labelled
+CPU-only"* on records that simultaneously carried `vramResidentFraction: 1`. A consumer
+pooling on that label would file a GPU-bound run into a CPU cohort.
+
+From scoring 1.5, when no supported GPU is detected **but the runtime reports non-zero bytes
+resident in device memory**, the diagnostics report the placement they can actually see and
+must not assert CPU-only. Capacity-dependent diagnostics become `unavailable` — the question
+is meaningful and unanswerable — rather than `not-applicable`, which would claim it is
+meaningless.
+
+Genuine CPU-only execution is unaffected, by construction rather than by intent: §7.2's
+forced-state table records `num_gpu 0` → `size_vram: 0`, so a GPU-less machine reports zero
+resident device bytes and keeps the CPU-only label. The discriminator is the runtime's own
+figure, so **no vendor-specific detection is introduced** — a unified-memory lane remains §3
+revision work.
 
 A report reading *"61% of bandwidth ceiling; 65% of resident bytes on the host"* is more useful
 and more defensible than any percentage target, and it holds at n=1.
