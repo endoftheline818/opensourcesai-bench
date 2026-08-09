@@ -153,3 +153,57 @@ test("connection errors name the exact loopback endpoint and action", () => {
   );
   assert.match(error.message, /Start Ollama and retry/);
 });
+
+// --- opensourcesai-bench#24: §3's OS row, enforced ---------------------------
+//
+// §3 scopes v1 to Windows and Linux, but nothing checked it. Every other §4
+// precondition is nvidia-smi-based and therefore no-ops on darwin, so a macOS
+// run completed with an empty conditions list and `cohortEligible: true` —
+// indistinguishable from a protocol-grade run in every field a consumer keys on.
+//
+// process.platform is stubbed rather than skipped: this suite runs on a
+// supported platform, so without the stub the branch would never execute and the
+// test would pass while proving nothing.
+function withPlatform(value, run) {
+  const original = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value, configurable: true });
+  try {
+    return run();
+  } finally {
+    Object.defineProperty(process, "platform", original);
+  }
+}
+
+const cleanSystem = {
+  power: { onBattery: false },
+  gpu: { utilizationPercent: 0 },
+  gpuCount: 1,
+  gpuProcesses: [],
+};
+
+test("#24: an out-of-scope platform refuses even when every hardware check is clean", () => {
+  const issues = withPlatform("darwin", () =>
+    __test.modelIndependentIssues(cleanSystem),
+  );
+  assert.deepEqual(
+    issues.map((issue) => issue.code),
+    ["unsupported-platform"],
+  );
+  // The message must name the platform and the supported set, because the user
+  // has to decide whether --quality-override is appropriate for their case.
+  assert.match(issues[0].message, /darwin/);
+  assert.match(issues[0].message, /win32, linux/);
+});
+
+test("#24 must not regress: supported platforms raise no platform condition", () => {
+  for (const platform of ["win32", "linux"]) {
+    const issues = withPlatform(platform, () =>
+      __test.modelIndependentIssues(cleanSystem),
+    );
+    assert.deepEqual(
+      issues,
+      [],
+      `${platform} must stay clean — a GPU-less Linux CPU-only run is in scope per §3`,
+    );
+  }
+});

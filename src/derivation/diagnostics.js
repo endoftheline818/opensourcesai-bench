@@ -16,6 +16,29 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
   const placement = runtime?.offloadPlacement ?? null;
   const gpuPresent = Boolean(system?.gpu?.present);
 
+  // GPU detection is nvidia-smi-only, so any other accelerator -- Apple Metal,
+  // ROCm -- reports `gpu.present: false`. That is a fact about the DETECTOR, not
+  // about where the model ran, and the runtime already tells us where it ran.
+  // When Ollama reports bytes resident in device memory, "CPU-only" is not a
+  // conservative label, it is a false one: a consumer pooling by it would ingest
+  // a GPU-bound run into a CPU cohort (opensourcesai-bench#24). Measured on an
+  // M1: `vramResidentFraction: 1` at 18.08 tok/s, ~67% of that part's documented
+  // bandwidth ceiling -- the GPU-execution band, not CPU thrash.
+  //
+  // A genuinely GPU-less machine is unaffected, and that is guaranteed rather
+  // than hoped: §7.2's forced-state table records `num_gpu 0` -> `size_vram: 0`,
+  // so real CPU-only execution reports zero resident device bytes and keeps the
+  // CPU-only label below. The discriminator is the runtime's own figure, so no
+  // Apple- or vendor-specific detection is introduced here -- deliberately, since
+  // a unified-memory lane is §3 revision work and should not block this.
+  const undetectedAccelerator =
+    !gpuPresent &&
+    Number.isFinite(placement?.vramResidentBytes) &&
+    placement.vramResidentBytes > 0;
+  const UNDETECTED_ACCELERATOR_NOTE =
+    "no supported discrete GPU was detected, but the runtime reports the model " +
+    "resident in device memory, so this run is not CPU-only";
+
   if (
     Number.isInteger(assignment?.cpuLayers) &&
     Number.isInteger(assignment?.totalLayers)
@@ -33,7 +56,7 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
         assignment,
       ),
     );
-  } else if (!gpuPresent) {
+  } else if (!gpuPresent && !undetectedAccelerator) {
     diagnostics.push(
       diagnostic(
         "partial-cpu-offload",
@@ -93,7 +116,7 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
         { gpuLayers, gpuModel: system.gpu.model ?? null },
       ),
     );
-  } else if (gpuPresent && placement) {
+  } else if ((gpuPresent || undetectedAccelerator) && placement) {
     // Definitional, not inferred: zero bytes resident in VRAM is what
     // CPU-only execution *is*. Ollama's own CLI prints "100% CPU" from this.
     const detected = placement.vramResidentBytes === 0;
@@ -103,7 +126,8 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
         detected ? "detected" : "not-detected",
         detected
           ? "A GPU was detected but none of the model is resident in VRAM; it is executing on the CPU"
-          : `${percent(placement.vramResidentFraction)} of the model's resident bytes are in VRAM`,
+          : `${percent(placement.vramResidentFraction)} of the model's resident bytes are in VRAM` +
+            (undetectedAccelerator ? ` (${UNDETECTED_ACCELERATOR_NOTE})` : ""),
         { ...placement, gpuModel: system.gpu.model ?? null },
       ),
     );
@@ -134,13 +158,20 @@ export function deriveDiagnostics({ system, model, runtime, configuration }) {
       ),
     );
   } else {
+    // `not-applicable` claims the question is meaningless; on an undetected
+    // accelerator the question is perfectly meaningful and we simply cannot
+    // answer it, because capacity comes from nvidia-smi and there is none here.
+    // That is `unavailable`, and the distinction is the whole point of #24.
+    const unanswerable = gpuPresent || undetectedAccelerator;
     diagnostics.push(
       diagnostic(
         "weights-exceed-vram",
-        gpuPresent ? "unavailable" : "not-applicable",
+        unanswerable ? "unavailable" : "not-applicable",
         gpuPresent
           ? "Weight size or total VRAM was unavailable"
-          : "No supported discrete GPU was detected",
+          : undetectedAccelerator
+            ? `Total device memory is unknown because ${UNDETECTED_ACCELERATOR_NOTE}`
+            : "No supported discrete GPU was detected",
       ),
     );
   }

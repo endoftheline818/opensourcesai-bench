@@ -10,8 +10,11 @@ import {
 } from "../src/protocol.js";
 
 test("protocol constants preserve fixed options, workload order, and pass counts", () => {
+  // PROTOCOL_VERSION deliberately unchanged: the §4 platform precondition uses
+  // the existing refuse/override machinery and no measurement semantics moved.
+  // opensourcesai-cmdcenter pins this exact string and refuses anything else.
   assert.equal(PROTOCOL_VERSION, "osai-bench/1.3");
-  assert.equal(SCORING_VERSION, "osai-bench-derive/1.4");
+  assert.equal(SCORING_VERSION, "osai-bench-derive/1.5");
   assert.deepEqual(FIXED_OPTIONS, { temperature: 0, seed: 42 });
   assert.deepEqual(Object.keys(WORKLOADS), ["w1", "w2", "w3", "w4"]);
   assert.equal(REPETITIONS, 5);
