@@ -264,6 +264,37 @@ function median(values) {
 const GPU_UTILIZATION_SAMPLES = 3;
 const GPU_UTILIZATION_SAMPLE_INTERVAL_MS = 200;
 
+// The median above fixes transient blips. It does NOT fix a sustained offset,
+// and on Windows WDDM there is one.
+//
+// utilization.gpu answers "was any kernel resident during the sample period",
+// not "how much work was done". Every compositing desktop process attached to
+// the card — browsers, Electron/CEF apps, the shell itself — keeps that true a
+// large fraction of the time while doing almost no work. Measured on an
+// RTX 4070 Ti (305W limit) on 2026-08-16, with the machine idle by every other
+// measure and Task Manager reporting 4%:
+//
+//   idle, several Electron apps open : util 29-38% , power  64-65W , 21% of limit
+//   real ollama generation           : util 98-100%, power 146-235W, 48-77% of limit
+//
+// Utilization alone cannot separate those: 38% idle sits far above the 10%
+// threshold. Power separates them cleanly, because a GPU genuinely doing a
+// third of its work cannot do it on idle wattage. Physics is the corroborator.
+//
+// So utilization still TRIGGERS the check and power CONFIRMS it. A machine that
+// looks busy but draws idle power is not contended and is allowed to proceed.
+// When power is unavailable (older card, restricted driver, non-NVIDIA path)
+// the check falls back to utilization alone, which is the historical behaviour:
+// the fix must never make the gate weaker than it was on hardware it cannot
+// corroborate.
+//
+// The threshold sits above the measured idle ceiling and well below the
+// measured load floor. It is deliberately nearer idle, because wrongly
+// admitting a contended run corrupts a measurement, while wrongly refusing one
+// only costs a retry.
+const GPU_UTILIZATION_THRESHOLD_PERCENT = 10;
+const GPU_CONTENTION_POWER_RATIO = 0.3;
+
 async function sampleGpuUtilization() {
   const result = await execSafe("nvidia-smi", [
     "--query-gpu=utilization.gpu",
@@ -273,9 +304,17 @@ async function sampleGpuUtilization() {
   return result.stdout.split(/\r?\n/).map((line) => Number(line.trim()));
 }
 
+// nvidia-smi reports "[N/A]" for fields a card or driver does not expose.
+function numericOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 async function queryNvidia() {
+  // power.draw and power.limit are appended LAST so every column position
+  // above them keeps its meaning.
   const gpuQuery = await execSafe("nvidia-smi", [
-    "--query-gpu=name,memory.total,memory.free,utilization.gpu,driver_version",
+    "--query-gpu=name,memory.total,memory.free,utilization.gpu,driver_version,power.draw,power.limit",
     "--format=csv,noheader,nounits",
   ]);
   if (!gpuQuery.ok || !gpuQuery.stdout) {
@@ -283,14 +322,23 @@ async function queryNvidia() {
   }
 
   const gpus = gpuQuery.stdout.split(/\r?\n/).map((line) => {
-    const [model, totalMiB, freeMiB, utilizationPercent, driverVersion] =
-      parseCsvLine(line);
+    const [
+      model,
+      totalMiB,
+      freeMiB,
+      utilizationPercent,
+      driverVersion,
+      powerDrawWatts,
+      powerLimitWatts,
+    ] = parseCsvLine(line);
     return {
       model,
       totalVramBytes: Number(totalMiB) * 1024 ** 2,
       freeVramBytes: Number(freeMiB) * 1024 ** 2,
       utilizationPercent: Number(utilizationPercent),
       driverVersion,
+      powerDrawWatts: numericOrNull(powerDrawWatts),
+      powerLimitWatts: numericOrNull(powerLimitWatts),
     };
   });
 
@@ -529,12 +577,32 @@ function modelIndependentIssues(system) {
   }
   if (
     Number.isFinite(system.gpu.utilizationPercent) &&
-    system.gpu.utilizationPercent > 10
+    system.gpu.utilizationPercent > GPU_UTILIZATION_THRESHOLD_PERCENT
   ) {
-    issues.push({
-      code: "gpu-utilization",
-      message: `Pre-existing GPU utilization is ${system.gpu.utilizationPercent}% (>10%)`,
-    });
+    const draw = system.gpu.powerDrawWatts;
+    const limit = system.gpu.powerLimitWatts;
+    const powerRatio =
+      Number.isFinite(draw) && Number.isFinite(limit) && limit > 0
+        ? draw / limit
+        : null;
+
+    // null means the card cannot corroborate; stay strict rather than guess.
+    const powerConfirmsContention =
+      powerRatio === null || powerRatio > GPU_CONTENTION_POWER_RATIO;
+
+    if (powerConfirmsContention) {
+      const powerNote =
+        powerRatio === null
+          ? "power draw unavailable, so utilization was taken at face value"
+          : `power draw ${draw.toFixed(1)}W of ${limit.toFixed(1)}W ` +
+            `(${Math.round(powerRatio * 100)}% of limit) confirms real work`;
+      issues.push({
+        code: "gpu-utilization",
+        message:
+          `Pre-existing GPU utilization is ${system.gpu.utilizationPercent}% ` +
+          `(>${GPU_UTILIZATION_THRESHOLD_PERCENT}%); ${powerNote}`,
+      });
+    }
   }
 
   const nonOllama = system.gpuProcesses.filter(
@@ -662,6 +730,10 @@ export class OllamaAdapter {
             utilizationPercent: gpu.utilizationPercent,
             driverVersion: gpu.driverVersion,
             provider: gpu.provider ?? "nvidia-smi",
+            // Recorded because the contention gate reasons about them: a
+            // reviewer can see why a run was allowed or refused.
+            powerDrawWatts: gpu.powerDrawWatts ?? null,
+            powerLimitWatts: gpu.powerLimitWatts ?? null,
           }
         : {
             present: false,
@@ -671,6 +743,8 @@ export class OllamaAdapter {
             utilizationPercent: null,
             driverVersion: null,
             provider: null,
+            powerDrawWatts: null,
+            powerLimitWatts: null,
           },
       gpuCount: detectedGpus.length,
       gpuProcesses: nvidia.processes,
