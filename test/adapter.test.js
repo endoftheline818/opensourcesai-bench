@@ -62,6 +62,84 @@ test("model-independent preconditions include startup-known conditions", () => {
   );
 });
 
+// A quiet machine in every respect except the one field under test.
+const contentionCase = (gpu) => ({
+  power: { onBattery: false },
+  gpu,
+  gpuCount: 1,
+  gpuProcesses: [],
+});
+
+test("elevated utilization on idle power is not contention", () => {
+  // Measured on an RTX 4070 Ti, 2026-08-16: several Electron apps open, Task
+  // Manager reporting 4%, the card drawing 65W of 305W at low clocks, and
+  // nvidia-smi still reporting 38% because utilization.gpu answers "was a
+  // kernel resident" rather than "how much work was done". Before power
+  // corroboration this refused every run on an idle machine, and no amount of
+  // closing applications fixed it.
+  assert.deepEqual(
+    __test
+      .modelIndependentIssues(
+        contentionCase({
+          utilizationPercent: 38,
+          powerDrawWatts: 65,
+          powerLimitWatts: 305,
+        }),
+      )
+      .map((issue) => issue.code),
+    [],
+  );
+});
+
+test("elevated utilization on load power is still refused", () => {
+  // Same card during a real ollama generation: 99% and 225W of 305W. The whole
+  // point of the gate, and it must survive the fix above.
+  const codes = __test
+    .modelIndependentIssues(
+      contentionCase({
+        utilizationPercent: 99,
+        powerDrawWatts: 225,
+        powerLimitWatts: 305,
+      }),
+    )
+    .map((issue) => issue.code);
+  assert.deepEqual(codes, ["gpu-utilization"]);
+});
+
+test("utilization is taken at face value when power cannot corroborate", () => {
+  // Older cards and restricted drivers report "[N/A]" for power. The fix must
+  // never leave the gate weaker than it was on hardware it cannot corroborate,
+  // so an uncorroborated reading still refuses.
+  for (const gpu of [
+    { utilizationPercent: 38, powerDrawWatts: null, powerLimitWatts: null },
+    { utilizationPercent: 38, powerDrawWatts: 65, powerLimitWatts: null },
+    { utilizationPercent: 38, powerDrawWatts: null, powerLimitWatts: 305 },
+    { utilizationPercent: 38, powerDrawWatts: 65, powerLimitWatts: 0 },
+  ]) {
+    assert.deepEqual(
+      __test.modelIndependentIssues(contentionCase(gpu)).map((i) => i.code),
+      ["gpu-utilization"],
+      `expected a refusal for ${JSON.stringify(gpu)}`,
+    );
+  }
+});
+
+test("utilization at or below the threshold never refuses, whatever the power", () => {
+  // A busy card at low utilization is the model loading, not contention.
+  assert.deepEqual(
+    __test
+      .modelIndependentIssues(
+        contentionCase({
+          utilizationPercent: 10,
+          powerDrawWatts: 300,
+          powerLimitWatts: 305,
+        }),
+      )
+      .map((issue) => issue.code),
+    [],
+  );
+});
+
 test("different loaded model remains a model-dependent precondition", () => {
   assert.deepEqual(
     __test.modelDependentIssues(
