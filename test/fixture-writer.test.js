@@ -56,6 +56,7 @@ function captureSource(model = "fixture-model:8b-q4") {
     "/home/alice/failed-attempt";
   return {
     model,
+    runtime: { name: "ollama", version: "0.32.5" },
     tagsResponse: {
       models: [
         {
@@ -275,6 +276,7 @@ test("terminal summary names captured fields, counts, redactions, and path", () 
   assert.match(summary, /schemaVersion: osai-bench-fixture\/2/);
   assert.ok(summary.includes(`clientVersion: ${CLIENT_VERSION}`));
   assert.match(summary, /protocolVersion: osai-bench\/1\.3/);
+  assert.match(summary, /runtime: ollama 0\.32\.5/);
   assert.match(summary, /tagsResponse\.models\[0\]/);
   assert.match(summary, /showResponse\.model_info/);
   assert.match(summary, /w1=1 slots\/1 attempts/);
@@ -359,4 +361,123 @@ test("a fixture with no psResponse still loads, and reports placement unavailabl
 
   assert.equal("psResponse" in fixture, false);
   assert.equal(extractOffloadPlacement(fixture.psResponse), null);
+});
+
+test("the runtime that produced the measurements is captured with the fixture", async () => {
+  // The provenance question a fixture exists to answer the moment a later run
+  // disagrees with it: which runtime produced these numbers? Before this, the
+  // only version string anywhere in a captured fixture was the client's.
+  const directory = await mkdtemp(path.join(os.tmpdir(), "osai-fixture-rt-"));
+  const { fixture } = await writeFixtureCapture(captureSource(), {
+    requestedPath: path.join(directory, "runtime.json"),
+    label: "runtime-capture",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+
+  assert.deepEqual(fixture.runtime, { name: "ollama", version: "0.32.5" });
+  assert.notEqual(
+    fixture.runtime.version,
+    fixture.clientVersion,
+    "the runtime version must be distinguishable from the client version",
+  );
+});
+
+test("a runtime that reports no version records null rather than nothing", () => {
+  const fixture = buildFixtureCapture({
+    ...captureSource(),
+    runtime: { name: "ollama", version: null },
+    label: "runtime-unreported",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+  assert.deepEqual(fixture.runtime, { name: "ollama", version: null });
+});
+
+test("a fixture with no runtime block still loads", async () => {
+  // Same terms as psResponse: every fixture captured before this field existed
+  // has no runtime block, and absent stays valid rather than being rejected.
+  const directory = await mkdtemp(path.join(os.tmpdir(), "osai-fixture-nort-"));
+  const source = captureSource();
+  delete source.runtime;
+  const { fixture } = await writeFixtureCapture(source, {
+    requestedPath: path.join(directory, "no-runtime.json"),
+    label: "no-runtime",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+
+  assert.equal("runtime" in fixture, false);
+  const summary = renderFixtureCaptureSummary({
+    outputPath: "/tmp/no-runtime.json",
+    fixture,
+  });
+  assert.match(summary, /runtime: not identified at capture time/);
+});
+
+test("the runtime block stays a name and a version, and nothing else", () => {
+  const fixture = buildFixtureCapture({
+    ...captureSource(),
+    runtime: {
+      name: "ollama",
+      version: "0.32.5",
+      // Ollama exposes no resolved server configuration (§8.4); anything
+      // claiming to be one must not widen the envelope by riding along.
+      resolvedConfiguration: { OLLAMA_KV_CACHE_TYPE: "q8_0" },
+      endpoint: "http://192.168.1.50:11434",
+    },
+    label: "runtime-allowlist",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+  assert.deepEqual(Object.keys(fixture.runtime).sort(), ["name", "version"]);
+  assert.equal(JSON.stringify(fixture).includes("192.168.1.50"), false);
+});
+
+test("a path-like or malformed runtime version is redacted or dropped", () => {
+  const redacted = buildFixtureCapture({
+    ...captureSource(),
+    runtime: { name: "ollama", version: "/home/alice/builds/ollama-dev" },
+    label: "runtime-path",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+  assert.equal(redacted.runtime.version, "[REDACTED_LOCAL_PATH]");
+  assert.ok(
+    redacted.redactions.pathValuesRedacted.includes("runtime.version"),
+    "the redaction must be recorded, not silent",
+  );
+
+  const multiline = buildFixtureCapture({
+    ...captureSource(),
+    runtime: { name: "ollama", version: "0.32.5\nwarning: /home/alice" },
+    label: "runtime-multiline",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+  assert.equal(multiline.runtime.version, null);
+
+  const nameless = buildFixtureCapture({
+    ...captureSource(),
+    runtime: { version: "0.32.5" },
+    label: "runtime-nameless",
+    capturedAt: "2026-07-25T12:00:00.000Z",
+  });
+  assert.equal("runtime" in nameless, false);
+});
+
+test("the capture is handed the same runtime identity the result records", async () => {
+  // The wiring, not just the writer: the defect was never that the writer
+  // mishandled a runtime block, it was that runBenchmark never passed one.
+  const source = await loadFixture("real-baseline-rtx3080.json");
+  const fixture = { ...source, runtime: { name: "ollama", version: "0.30.10" } };
+  let captured = null;
+  const record = await runBenchmark({
+    adapter: new FixtureAdapter(fixture),
+    model: fixture.tagsResponse.models[0].name,
+    memoryBandwidthGBps: 760,
+    onFixtureCapture: (capture) => {
+      captured = capture;
+    },
+  });
+
+  assert.deepEqual(captured.runtime, {
+    name: record.runtime.name,
+    version: record.runtime.version,
+  });
+  assert.equal(record.runtime.version, "0.30.10");
 });
