@@ -91,12 +91,45 @@ Data quality is enforced at collection, not modelled around later. A run is **re
 | Pre-existing GPU utilization > 10% at check time | Another workload is competing |
 | Pre-existing GPU memory in use by a non-Ollama process above a threshold | Contention and reduced available VRAM |
 | Ollama reports a model already loaded that is not the target model | Cold-load timing invalid |
+| The selected model's prompt token count falls outside a workload's §5.2 band, or reaches its `num_ctx` | Every measured pass of that workload would fail §5.4 validity, so the run cannot produce the figure it is being asked for |
 
 The platform condition is checked first and independently of any hardware reading, because
 on an out-of-scope platform the readings the others depend on are absent rather than clean.
 A GPU-less **Windows or Linux** machine is explicitly *not* caught by it: CPU-only is an
 in-scope accelerator per §3, and its label there is correct. The distinguishing fact is the
 platform, not the absent GPU.
+
+**The prompt-band condition is a model property, not a machine property**, and it is the only
+condition here that is. It is checked **after** the machine-state conditions above, because
+checking it means loading the model, and loading a model onto a contended, battery-limited or
+out-of-scope machine is what those conditions exist to prevent. It is checked **before** W1,
+which is safe because W1 forces an unload before every attempt, so its cold-load timing is
+unaffected by a model the check left resident.
+
+The check is one `/api/generate` call per distinct banded prompt with `num_predict: 1` — two
+calls, since W2 and W4 send the same prompt at the same `num_ctx` against the same band. Its
+cost is one model load plus two prefills: **7.5 s measured on an RTX 3080** for both a
+conforming and a non-conforming model. **A refusal must unload the probed model**, because the
+check leaves it resident under its `keep_alive` and would otherwise trip the resident-model
+condition above on the operator's obvious next action — running again with a different model.
+A run that proceeds needs no equivalent, since W1 force-unloads before every attempt. What it replaces is the entire protocol — about 13
+minutes on a Raspberry Pi 4B — spent to produce a report whose generation, prefill and TTFT
+were all `unavailable` and whose cause appeared nowhere in the human-readable output.
+
+**This enforces §5.4 earlier; it does not weaken it.** The band and truncation rules are one
+implementation used at both moments, so the condition that refuses a run up front is precisely
+the condition that would have failed each pass. `qualityOverride` governs this phase, as it
+governs the conditions above it — an overridden run executes the full protocol and reports the
+failures it actually measures. It has never relaxed §5.4 and must not.
+
+**One deterministic failure mode is deliberately outside this check:** a model that stops
+generating before `num_predict`, and so fails §5.4's eval-count rule on every W2 and W4 pass
+(§12.1a). A prompt's token count is a property of the tokenizer and chat template, readable
+from a single cheap prefill. Early EOS is a property of generation, and the only way to observe
+it is to generate — which costs the workload's whole budget, and would turn a check measured in
+seconds into one measured in minutes. The trade that justifies the band check does not carry
+over, so this section claims only the band, and says so rather than implying coverage it does
+not have.
 
 Refusal must state the specific condition and be overridable only by an explicit flag that
 **marks the record permanently as `qualityOverride: true`**. Overridden records are excluded
@@ -249,6 +282,15 @@ the cold-load property: W1 still contributes one measured pass, while its raw re
 all attempts. Warmups are discarded and are not validity-retried.
 
 Failed measured passes and workloads are recorded, not omitted.
+
+**Retries recover from a pass that happened to be invalid. They cannot recover from a model
+that is invalid on every pass.** The two prompt rules above are deterministic for a given model
+and prompt — `temperature: 0` and `seed: 42` are protocol constants (§5.1) — so a model whose
+tokenizer puts the count outside the band fails all three attempts of all five measured passes,
+every time. That is the retry mechanism working exactly as specified and producing nothing of
+value, which is why §4 now asks the same two rules once, before measuring, and refuses. **The
+rules themselves are unchanged, and are one implementation shared by both checks**: a prompt
+the §4 check admits is a prompt §5.4 will accept, and neither can drift from the other.
 
 ---
 

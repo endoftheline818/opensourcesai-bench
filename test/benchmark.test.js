@@ -28,6 +28,14 @@ function systemSnapshot() {
   };
 }
 
+function bandMidpoint(workload) {
+  return workload.promptTokenRange
+    ? Math.floor(
+        (workload.promptTokenRange.min + workload.promptTokenRange.max) / 2,
+      )
+    : 5;
+}
+
 class FakeAdapter {
   constructor({
     issues = [],
@@ -35,13 +43,43 @@ class FakeAdapter {
     retryW1 = false,
     failW4 = false,
     failW1 = false,
+    // Per-workload prompt token counts the §4 probe reports. The default is
+    // the band midpoint — a model the fixed prompts fit.
+    probePromptTokens = {},
   } = {}) {
     this.issues = issues;
     this.retryW2 = retryW2;
     this.retryW1 = retryW1;
     this.failW4 = failW4;
     this.failW1 = failW1;
-    this.calls = { w1: 0, w2: 0, w3: 0, w4: 0, forceUnload: 0 };
+    this.probePromptTokens = probePromptTokens;
+    this.calls = { w1: 0, w2: 0, w3: 0, w4: 0, forceUnload: 0, probe: 0 };
+    this.probedWorkloads = [];
+    this.probedPrompts = [];
+  }
+
+  async probePrompt(_model, workload) {
+    this.calls.probe += 1;
+    this.probedWorkloads.push(workload.id);
+    this.probedPrompts.push(workload.prompt);
+    return {
+      chunks: [
+        {
+          done: true,
+          total_duration: 1_000_000_000,
+          load_duration: 1_000_000_000,
+          // hasOwn, not ??, so a test can say "this probe reports no usable
+          // count" with null and have that mean null rather than the default.
+          prompt_eval_count: Object.hasOwn(this.probePromptTokens, workload.id)
+            ? this.probePromptTokens[workload.id]
+            : bandMidpoint(workload),
+          prompt_eval_duration: 1_000_000_000,
+          eval_count: 1,
+          eval_duration: 1_000_000,
+        },
+      ],
+      timeToFirstTokenMs: 10,
+    };
   }
 
   async checkPreconditions() {
@@ -171,6 +209,11 @@ test("full run executes one cold pass and warmup plus five measured passes", asy
     w3: 6,
     w4: 6,
     forceUnload: 1,
+    // Two §4 prompt-fit probes, not three: W2 and W4 send the same prompt at
+    // the same num_ctx against the same band, so one probe answers for both.
+    // The measured pass counts are unchanged — the probe adds work before the
+    // protocol, it does not alter the protocol.
+    probe: 2,
   });
   assert.equal(record.rawMeasurements.workloads.w2.measuredPasses.length, 5);
   assert.equal(record.rawMeasurements.workloads.w2.warmup.eval_count, 128);
@@ -545,4 +588,189 @@ test("explicit quality override is permanent and cohort-ineligible", async () =>
   assert.deepEqual(record.qualityConditions, [
     { code: "gpu-utilization", detected: true },
   ]);
+});
+
+// §4 prompt-fit gate (#25). The numbers below are the real measured ones from
+// §12.1a, not invented: 68 is qwen2.5:7b-instruct-q8_0 against the W2/W4
+// ceiling of 64, and 76/1026 is tinyllama:latest against 20-64 and 2000-4095.
+
+test("#25: a model whose prompt misses the band is refused before anything is measured", async () => {
+  const adapter = new FakeAdapter({ probePromptTokens: { w2: 68, w4: 68 } });
+  await assert.rejects(
+    () => runBenchmark({ adapter, model: "fixture:8b", memoryBandwidthGBps: 500 }),
+    (error) => {
+      assert.ok(error instanceof QualityRefusalError);
+      assert.equal(error.issues.length, 1);
+      assert.equal(
+        error.issues[0].code,
+        "prompt-count-out-of-range-precondition",
+      );
+      assert.deepEqual(error.issues[0].workloads, ["w2", "w4"]);
+      assert.equal(error.issues[0].actual, 68);
+      assert.match(error.issues[0].message, /68 prompt tokens for W2\/W4/);
+      assert.match(error.issues[0].message, /between 20 and 64 tokens/);
+      assert.match(error.issues[0].message, /unavailable/);
+      return true;
+    },
+  );
+  // The entire point. Before this gate the same model ran all 19 scheduled
+  // passes -- about 13 minutes on a Raspberry Pi 4B -- to produce a report
+  // whose generation, prefill and TTFT were all unavailable.
+  assert.deepEqual(
+    { w1: adapter.calls.w1, w2: adapter.calls.w2, w3: adapter.calls.w3, w4: adapter.calls.w4 },
+    { w1: 0, w2: 0, w3: 0, w4: 0 },
+    "no measured pass may run once the model is known not to fit",
+  );
+  // Not zero: probing loads the model, and its keep_alive would hold it
+  // resident for five minutes. Leaving it there makes the operator's obvious
+  // next move -- rerun with a different model -- fail on the resident-model
+  // precondition, turning one refusal into two. Found on real hardware.
+  assert.equal(adapter.calls.forceUnload, 1);
+});
+
+test("#25: a refusal that never loaded the model does not unload one", async () => {
+  const adapter = new FakeAdapter({
+    issues: [{ code: "on-battery", message: "System is running on battery" }],
+  });
+  await assert.rejects(() => runBenchmark({ adapter, model: "fixture:8b" }));
+  assert.equal(adapter.calls.forceUnload, 0);
+});
+
+test("#25: an unload failure does not mask the refusal it follows", async () => {
+  const adapter = new FakeAdapter({ probePromptTokens: { w2: 68, w4: 68 } });
+  adapter.forceUnload = async () => {
+    throw new Error("runtime went away");
+  };
+  await assert.rejects(
+    () => runBenchmark({ adapter, model: "fixture:8b" }),
+    (error) =>
+      error instanceof QualityRefusalError &&
+      error.issues[0].code === "prompt-count-out-of-range-precondition",
+  );
+});
+
+test("#25: both directions are caught, and each names the workload it belongs to", async () => {
+  // tinyllama fails in both directions at once: over the short-prompt ceiling
+  // and under the long-prompt floor, the latter because its real trained
+  // context is 2048 and the W3 floor is 2000.
+  const adapter = new FakeAdapter({
+    probePromptTokens: { w2: 76, w4: 76, w3: 1026 },
+  });
+  await assert.rejects(
+    () => runBenchmark({ adapter, model: "tinyllama:latest" }),
+    (error) => {
+      const codes = error.issues.map((issue) => issue.code);
+      assert.deepEqual(codes, [
+        "prompt-count-out-of-range-precondition",
+        "prompt-count-out-of-range-precondition",
+      ]);
+      const byWorkload = Object.fromEntries(
+        error.issues.map((issue) => [issue.workloads.join("/"), issue]),
+      );
+      assert.match(byWorkload["w2/w4"].message, /76 prompt tokens/);
+      assert.match(byWorkload["w2/w4"].message, /between 20 and 64/);
+      assert.match(byWorkload.w3.message, /1026 prompt tokens/);
+      assert.match(byWorkload.w3.message, /between 2000 and 4095/);
+      return true;
+    },
+  );
+});
+
+test("#25: a prompt long enough to be truncated is refused too, not just an out-of-band one", async () => {
+  // The truncation signature is the other half of the shared rule: a count
+  // pinned at num_ctx means the runtime cut the prompt, and a measurement of a
+  // prompt that was never processed in full is worthless whether or not the
+  // truncated count happens to land inside the band.
+  const adapter = new FakeAdapter({ probePromptTokens: { w3: 4096 } });
+  await assert.rejects(
+    () => runBenchmark({ adapter, model: "fixture:8b" }),
+    (error) =>
+      error.issues.some(
+        (issue) => issue.code === "prompt-truncated-precondition",
+      ),
+  );
+});
+
+test("#25: the refusal is overridable, and the condition is recorded on the record", async () => {
+  const adapter = new FakeAdapter({ probePromptTokens: { w2: 68, w4: 68 } });
+  const record = await runBenchmark({
+    adapter,
+    model: "fixture:8b",
+    memoryBandwidthGBps: 500,
+    qualityOverride: true,
+  });
+  // Overriding runs the protocol in full. It does not, and must not, relax
+  // §5.4: the probe said the prompt misses the band, so the measured passes
+  // miss it too and the run reports what it actually measured.
+  assert.equal(adapter.calls.w2, 6);
+  assert.equal(record.qualityOverride, true);
+  assert.equal(record.cohortEligible, false);
+  assert.deepEqual(record.qualityConditions, [
+    { code: "prompt-count-out-of-range-precondition", detected: true },
+  ]);
+});
+
+test("#25: the machine-state gate still runs first, so no model is loaded onto a bad machine", async () => {
+  const adapter = new FakeAdapter({
+    issues: [{ code: "gpu-utilization", message: "GPU utilization above 10%" }],
+    probePromptTokens: { w2: 68, w4: 68 },
+  });
+  await assert.rejects(
+    () => runBenchmark({ adapter, model: "fixture:8b" }),
+    (error) => error.issues[0].code === "gpu-utilization",
+  );
+  assert.equal(
+    adapter.calls.probe,
+    0,
+    "probing loads the model, which is exactly what the machine gate prevents",
+  );
+});
+
+test("#25: an adapter that cannot probe is not blocked by the gate", async () => {
+  // The probe is an optional adapter capability, on the same terms as
+  // readEnvironment. A future adapter for a runtime with no equivalent call
+  // loses the early refusal, not the ability to run.
+  const adapter = new FakeAdapter({ probePromptTokens: { w2: 68, w4: 68 } });
+  adapter.probePrompt = undefined;
+  const record = await runBenchmark({
+    adapter,
+    model: "fixture:8b",
+    memoryBandwidthGBps: 500,
+  });
+  assert.equal(record.qualityConditions.length, 0);
+  assert.equal(adapter.calls.w2, 6);
+});
+
+test("#25: an inconclusive probe does not convict the model", async () => {
+  // A runtime that reports no prompt token count has said nothing about the
+  // model. §5.4 stays the backstop it always was.
+  const adapter = new FakeAdapter({ probePromptTokens: { w2: null, w3: null } });
+  const record = await runBenchmark({
+    adapter,
+    model: "fixture:8b",
+    memoryBandwidthGBps: 500,
+  });
+  assert.equal(record.qualityConditions.length, 0);
+  assert.equal(adapter.calls.w2, 6);
+});
+
+test("#25: the W3 probe carries its own cache-bust marker, colliding with no measured call", async () => {
+  // W3's prompt must diverge from token 0 on every request or the run seeds
+  // the prefix cache it exists to defeat. A probe reusing a measured call's
+  // marker would hand W3's warmup a cache hit.
+  const adapter = new FakeAdapter();
+  await runBenchmark({
+    adapter,
+    model: "fixture:8b",
+    memoryBandwidthGBps: 500,
+  });
+  const w3Probe = adapter.probedPrompts.find((prompt) =>
+    prompt.includes("cache-bust w3#"),
+  );
+  assert.ok(w3Probe, "the W3 probe must carry a cache-bust marker");
+  assert.equal(
+    adapter.seenPrompts.w3.includes(w3Probe),
+    false,
+    "the probe's prompt must not equal any measured W3 prompt",
+  );
 });
