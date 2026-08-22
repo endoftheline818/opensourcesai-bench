@@ -27,9 +27,20 @@ export const MAX_RETRIES = 2;
 // settle this value before v1.0.0.
 export const NON_OLLAMA_GPU_MEMORY_THRESHOLD_MIB = 512;
 
-// §12.1 provisional prompts. They are license-clean original text, but their
-// token counts and early-EOS behavior still require hardware testing across
-// common instruct-tuned models before the protocol freezes.
+// §12.1 provisional prompts. They are license-clean original text, and the
+// hardware testing §12.1 called for has now found both of the failure modes it
+// anticipated — see §12.1a. Four models miss the bands: three because their
+// chat template pushes prompt_eval_count past a ceiling (68, 81 and 76 tokens
+// against W2/W4's 20-64) or below W3's floor (TinyLlama, 1,026 against 2,000,
+// its trained context being only 2,048), and phi3:3.8b-mini-128k-instruct-fp16
+// because it early-EOSes at exactly 107 tokens under both a 128- and a
+// 512-token budget.
+//
+// Deliberately unchanged. Widening a band or revising the early-EOS rule
+// changes what is measured and makes new records incomparable with every
+// osai-bench/1.3 record already produced (§2). That is a protocol revision to
+// take on its own evidence and with a version bump, not an edit to make four
+// models pass.
 export const SHORT_PROMPT =
   "Write a continuous numbered list from 1 through 200. For each number, add one different English noun. Do not explain, summarize, or stop before item 200.";
 

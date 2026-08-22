@@ -269,8 +269,25 @@ hardware testing before the protocol freezes or the package reaches `v1.0.0`.
 
 ## Draft-protocol limitations
 
-The six open questions in §12 remain open. The current provisional choices are
-visible next to their constants and extraction logic. In particular, Ollama
+Five of the six open questions in §12 are answered. The one still open is
+§12.1, the fixed prompts — and it is open again rather than never closed. It
+was answered against three tokenizer families, and breadth testing has since
+found four models the prompts do not fit (§12.1a).
+
+**Not every model can be benchmarked under `osai-bench/1.3`.** A model whose
+chat template puts the prompt outside a workload's token band, or which stops
+generating before `num_predict`, fails every banded workload and reports
+`unavailable` for generation throughput, prefill throughput and time to first
+token. Measured examples: `qwen2.5:7b-instruct-q8_0` and `tinyllama:latest`
+overshoot the short-prompt band; `tinyllama` also undershoots the long-prompt
+floor, its trained context being 2,048; and
+`phi3:3.8b-mini-128k-instruct-fp16` stops at 107 generated tokens regardless of
+the budget it is given. This is the validity checks working — a failed run is
+data, and no figure is reported for a pass that did not measure one — not a
+list of models to be accommodated by loosening a band.
+
+The current provisional choices are visible next to their constants and
+extraction logic. In particular, Ollama
 does not currently expose a standard per-layer GPU/CPU assignment in the API
 responses this client consumes, so layer-based diagnostics report
 `unavailable` instead of inferring layers from byte counts.

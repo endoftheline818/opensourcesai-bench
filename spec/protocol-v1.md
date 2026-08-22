@@ -750,11 +750,13 @@ against the gate's own wording; the nuance is additional signal, not a shortfall
 ## 12. Open questions — resolve during hardware testing, before freeze
 
 Status after the 2026-07-25 RTX 4070 Ti hardware session. Every per-item figure below is measured
-on that one machine and model. A second GPU has since been checked for the negative control and
-for items 2–4 (§11.2, RTX 3080, 2026-07-26) — a second model family is still required before the
-freeze (item 1), along with items 5 and 6.
+on that one machine and model unless it says otherwise. A second GPU has since been checked for
+the negative control and for items 2–4 (§11.2, RTX 3080, 2026-07-26), and items 5 and 6 were
+closed on the same rig. **Item 1 was closed and has since been reopened by breadth testing —
+§12.1a is the current status, and it is the one substantive question still open before a
+freeze.**
 
-1. **Answered — a second model family confirms the prompts hold.** The W2/W3/W4 prompt texts are
+1. **Answered for the three families tested; reopened by breadth — see §12.1a.** The W2/W3/W4 prompt texts are
    license-clean originals, sized (§5.2) so their token counts land inside each band across
    tokenizers. Re-measured with `scripts/diagnose-prompts.js`: llama3.1:8b gives W2/W4 = 45,
    W3 = 2,664 (6.73 characters per token); qwen3:8b — a genuinely independent family with a
@@ -771,7 +773,9 @@ freeze (item 1), along with items 5 and 6.
    against llama3.1's 171 ms on the same GPU. (phi3-mini's band check is a prefill-only
    token-count probe; it was not run as a full generation capture because its F16 weights plus a
    4,096-token KV cache do not leave clean headroom on a 10 GB card, which would risk a silent
-   partial offload rather than a clean baseline.)
+   partial offload rather than a clean baseline.) **The claim this item can carry is the one it
+   measured: the prompts hold on these three tokenizers. Breadth has since shown it does not
+   generalise — §12.1a.**
 2. **Answered — 5 repetitions is sufficient.** Observed CVs: generation 0.57% / 0.05%, prefill
    0.15% / 0.07%, TTFT 0.71% / 2.21% across the baseline and negative-control runs. Variance at
    that level is far below anything 7–10 repetitions would meaningfully tighten. Retain 5.
@@ -812,13 +816,83 @@ freeze (item 1), along with items 5 and 6.
    the opposite direction from a bug that would flatter a system. The "substantial non-weight
    overhead" worry is disproven.
 
-**Remaining before freeze:** none of the original §12 questions. Items 1–6 are answered: the
-prompts hold across three tokenizer families spanning 32k–151k vocab (§12.1), W3 is
-saturation-bound (§12.5), and the roofline denominator is genuine weight bytes (§12.6). The RTX
-3080 re-run (§11.2) confirms the negative control and items 2–4 are not GPU-specific. What
-remains before freeze is breadth, not open questions — more GPUs and model families in the
-fixture set — and any protocol gaps still marked provisional in the sections above (e.g. the §4
-contention threshold).
+### 12.1a Prompt-band breadth — four models that the fixed prompts do not fit
+
+§12.1 asked whether the fixed W2/W3/W4 prompts hold "across common instruct-tuned models". It was
+answered against three families, chosen to span a 32k–151k tokenizer vocabulary. Breadth testing
+has since found four models that they do not fit, in **two distinct mechanisms**, and every one
+reproduced identically on an independent rerun — expected given `temperature: 0` and `seed: 42`
+are protocol constants (§5.1), but confirmed empirically rather than assumed.
+
+None of these is a defect in the validity checks, which correctly refuse to report a figure they
+did not measure. They are recorded here because §12.1's answer, restated as a general claim, is
+false, and the freeze decision must be taken against what breadth actually shows rather than
+against the three families that happened to be measured first.
+
+**Mechanism 1 — the tokenizer puts `prompt_eval_count` outside the band.**
+
+| Model | Workload | Band | Actual | Rig |
+|---|---|---:|---:|---|
+| `qwen2.5:7b-instruct-q8_0` | W2, W4 | 20–64 | **68** | RTX 3080, Ollama 0.32.5, client 0.10.0 |
+| `laguna-xs-2.1:latest` (locally built) | W2, W4 | 20–64 | **81** | same |
+| `tinyllama:latest` (Q4_0) | W2, W4 | 20–64 | **76** | Raspberry Pi 4B 8 GB, Ollama 0.32.5 |
+| `tinyllama:latest` (Q4_0) | W3 | 2000–4095 | **1026** | same |
+
+The overshoot is small — 4 tokens on qwen2.5, 12 on TinyLlama — and comes from the chat template's
+own overhead rather than from the prompt text splitting differently. TinyLlama fails in **both**
+directions at once, and the W3 undershoot is the structural one: its real trained context is 2,048,
+so a 2,000-token floor set for tokenizer robustness cannot be cleared by a model whose context
+barely exceeds it.
+
+**Mechanism 2 — the model stops generating before `num_predict`.**
+
+`phi3:3.8b-mini-128k-instruct-fp16` returns `eval_count: 107` against SHORT_PROMPT's "write 1
+through 200, do not stop before item 200" instruction — on **both** W2 (`num_predict` 128) and W4
+(`num_predict` 512). Identical count under two budgets that differ four-fold is the signature of a
+genuine early EOS, not truncation, not offload pressure, and not contention.
+
+That model deserves particular attention, because §12.1 lists phi3-mini among the three families
+that answered the question. Its check there was explicitly a **prefill-only token-count probe**:
+the item says so, and gives the reason (F16 weights plus a 4,096-token KV cache leave no clean
+headroom on a 10 GB card). So the family's *generation* behaviour was never tested, §12.1 never
+claimed it was, and this is the first measurement of it. The early stop is a property of the
+model's own EOS behaviour and is unaffected by the headroom caveat, which bears on throughput
+figures rather than on `eval_count`.
+
+**Consequences, as things stand.** All four models fail every banded workload, so none produces a
+generation, prefill or TTFT figure at all: `generationTokensPerSecond.median: null`, and pass
+failure rates of 62.5% on the RTX 3080 three (W2 and W4 fail, W1 and W3 pass) and 93.75% on
+TinyLlama (only W1, which has no band, passes). None is cohort-eligible. As things stand a user
+learns this only after the full protocol has run, by reading the result JSON — a separate
+discoverability problem, and one whose fix would not make these models measurable either.
+
+**What this does not authorise.** Widening a band or revising the early-EOS rule changes what is
+measured and would make new records incomparable with every record already produced under
+`osai-bench/1.3` (§2). That is a protocol revision with a version bump, taken deliberately and on
+its own evidence — not a change to be made because four models would like to pass. This subsection
+records the evidence; it decides nothing.
+
+**Sampling honesty.** Four models is not a survey. Three came out of a 19-model sweep on one rig,
+so roughly one in six of the models on that machine could not be benchmarked; the fourth is
+Ollama's default `tinyllama` tag, which is a plausible first choice for someone trying the tool on
+small hardware. Both facts bear on freeze scope more than either does alone: the failures are not
+exotic, and they are not rare.
+
+**Remaining before freeze:** items 2–6 are answered and stay answered. W3 is saturation-bound
+(§12.5), the roofline denominator is genuine weight bytes (§12.6), and the RTX 3080 re-run
+(§11.2) confirms the negative control and items 2–4 are not GPU-specific.
+
+**Item 1 is not.** It was answered on three tokenizer families spanning 32k–151k vocab, and that
+measurement stands; what does not stand is the general claim built on it. Breadth has since
+produced four counterexamples in two mechanisms (§12.1a), including one — early EOS on the phi3
+family — that §12.1's own probe was explicitly not designed to detect. **This is the substantive
+item outstanding before the protocol can be frozen**, alongside any protocol gaps still marked
+provisional in the sections above (e.g. the §4 contention threshold).
+
+The earlier framing — "what remains before freeze is breadth, not open questions" — drew a line
+this evidence erases. Breadth *was* the open question. The prompts were sized against the models
+that were to hand, and the first sweep wide enough to be adversarial to them found failures at
+roughly one model in six. Reaching a freeze needs a decision on item 1, not merely more fixtures.
 
 The §12.4 detection route is **closed** as of client 0.9.0: both placement diagnostics now fire
 from `/api/ps` byte placement (§7.2), and §11's gate is restored to requiring them. The one
