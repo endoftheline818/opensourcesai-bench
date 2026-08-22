@@ -25,6 +25,10 @@ the commit that added it. **Do not re-derive, "improve", simplify, or quietly de
 If something in it is wrong, say so and leave the code conforming — then change the spec in its
 own commit, with the rationale, and bump the protocol version.
 
+**`spec/coverage-v1.md` records what has actually been validated**, as opposed to what §3 says is
+in scope. Consult it before claiming a configuration works, and add to it by capturing a fixture
+rather than by asserting a row.
+
 Spec §12 lists open questions that hardware testing has not closed. **None of them are settled.**
 Where code must pick a value to run, mark it in-line as provisional and reference the §12 item.
 

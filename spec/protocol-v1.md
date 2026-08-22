@@ -60,6 +60,9 @@ measurements are not comparable with earlier ones.
 | Accelerator | Single discrete GPU, or CPU-only (labelled) |
 | Model | Any Ollama-pullable model the user selects |
 
+This table states what is **in scope**. What has actually been validated is narrower, and the
+gap between the two is recorded in [`coverage-v1.md`](coverage-v1.md) — scope is not evidence.
+
 Multi-GPU, Apple Silicon unified memory, and other runtimes (LM Studio, llama.cpp, vLLM,
 GPUStack) are out of scope for v1. The adapter interface (§10) is shaped to accept them
 without a protocol revision, provided they expose equivalent timing data.
