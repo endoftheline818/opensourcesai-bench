@@ -955,6 +955,90 @@ approach; it is not a precision problem but a contaminated denominator.
 
 ## 13. Changelog
 
+### `clientVersion` 0.13.0 — 2026-08-21 (§3 and §4 enforced; provenance and auditability) · `scoringVersion` → `osai-bench-derive/1.5`
+
+The largest client release so far, and the one with the most user-visible refusals. **No workload,
+fixed parameter, timing rule or prompt changed, so `protocolVersion` holds at `osai-bench/1.3`** —
+see [`change-control-v1.md`](change-control-v1.md) §3 for why a new refusal is not a protocol
+change.
+
+- **§3's OS row is enforced (#24).** A macOS run previously *completed* and returned
+  `cohortEligible: true` with the GPU undetected — indistinguishable, in every field a consumer
+  keys on, from a protocol-grade run, because every §4 precondition is `nvidia-smi`-based and
+  no-ops elsewhere. §4 now carries an explicit platform condition, checked first and independently
+  of any hardware reading. An out-of-scope platform is refused rather than silently accepted, and
+  stays runnable through `--quality-override`, which marks the record cohort-ineligible.
+- **A GPU reported as resident is no longer labelled CPU-only** (§7.3). This is the derivation
+  change that moves `scoringVersion` to `1.5`: the placement diagnostics and the printed
+  Configuration line no longer assert CPU-only execution when the runtime reports the model
+  resident in device memory but the `nvidia-smi`-only detector found no GPU. Raw measurements are
+  untouched, so every existing record recomputes rather than being orphaned.
+- **Refusal guidance is followable.** "Resolve these conditions and retry" was sound for all four
+  original §4 conditions — every one clears if the operator changes something. It is not sound for
+  a platform condition, and unfollowable advice is worse than terse advice. Any unresolvable
+  condition now makes the whole retry futile, not just its own line.
+- **GPU contention is corroborated with power draw.** The contention gate refused every run on a
+  genuinely idle Windows machine, and closing applications could not fix it: `utilization.gpu`
+  answers "was any kernel resident during the sample period", not "how much work was done", and on
+  Windows WDDM every compositing process attached to the card keeps that true a large fraction of
+  the time. Measured on an RTX 4070 Ti (305 W limit), idle by every other measure: utilization
+  29–38% at 64–65 W (21% of limit), against a real generation run at 98–100% and 146–235 W
+  (48–77%). Utilization still triggers the check and power now confirms it. Where power is
+  unavailable — older cards and restricted drivers report `[N/A]` — the check falls back to
+  utilization alone, because the fix must never leave the gate weaker on hardware it cannot
+  corroborate.
+- **§4 refuses a model whose prompts miss a workload's token band (#25).** Deterministic, since
+  `temperature: 0` and `seed: 42` are protocol constants, so the retry mechanism previously ran all
+  three attempts of all five passes and recovered nothing: on a Raspberry Pi 4B, `tinyllama:latest`
+  spent about 13 minutes producing a report whose generation, prefill and TTFT were all
+  `unavailable`, with the cause appearing nowhere in the human-readable output. One probe per
+  distinct banded prompt, `num_predict: 1`, two calls rather than three because W2 and W4 share a
+  prompt — 7.5 s measured on an RTX 3080, against `qwen2.5:7b-instruct-q8_0` refused in 3.7 s.
+  **§5.4's band and truncation rules are one shared implementation used at both moments**, so a
+  prompt the §4 check admits is one §5.4 already accepts. A refusal unloads the probed model, or
+  the operator's next run with a different model would trip the resident-model condition.
+- **Early EOS is deliberately outside that check.** `phi3:3.8b-mini-128k-instruct-fp16` stops at
+  exactly 107 tokens under both a 128- and a 512-token budget (§12.1a). A prompt's token count is a
+  property of the tokenizer and template, readable from one cheap prefill; early EOS is a property
+  of generation, observable only by generating, which costs a workload's whole budget.
+- **`--quality-override` states what it does not do.** It governs the precondition phase, never the
+  §5.4 per-pass checks — running with it produces identical failure rates. The behaviour was always
+  right; the help text invited the wrong assumption.
+- **Captured fixtures record the runtime that produced them (#19).** `clientVersion` and
+  `protocolVersion` were recorded and no runtime version was, so a fixture could not answer which
+  runtime produced its numbers — the question it exists for the moment a later run disagrees.
+  Optional on the `psResponse` precedent: absent stays valid, `FIXTURE_SCHEMA_VERSION` is unchanged,
+  and existing fixtures are **not** backfilled, because writing a version in from what is
+  remembered about a machine would encode the inference the field exists to remove.
+- **`--verify` re-derives a stored result from its own raw measurements (#15).** §2 has always
+  claimed derived figures are recomputable; nothing let a reader check it. Four layers — identity,
+  configuration conformance, validity recomputation, derivation recomputation — reading one local
+  file with no Ollama, no network and no GPU. It establishes **internal consistency, never
+  authenticity**: every check is computable by whoever invented the data.
+- **New companion documents:** [`coverage-v1.md`](coverage-v1.md) (what has been validated, as
+  opposed to what §3 puts in scope), [`change-control-v1.md`](change-control-v1.md) (which version a
+  change moves, and the freeze checklist), [`result-integrity-v1.md`](result-integrity-v1.md) (the
+  threat model and the boundary of what a client can establish).
+- **§12.1 is reopened by breadth (§12.1a).** Four models in two mechanisms do not fit the fixed
+  prompts. Nothing in the protocol changed; the evidence is recorded so the freeze can be taken
+  against it.
+
+### `clientVersion` 0.12.0 — 2026-08-06 (results land in a known place)
+
+- **Without `--output`, a result is written to `~/.osai/bench-results/` with a timestamped name**
+  rather than into the working directory. A result outlives the terminal session that produced it,
+  and local tools can offer to open one without being told where it went. **Nothing ever reads the
+  directory back during a run** — it is a destination, not state, and the client's no-network and
+  no-prior-run-state properties are unaffected.
+- `--output` continues to take an exact path and still refuses to overwrite.
+- **The README's version sentence is covered by the version-aligned package test.** It had drifted
+  five minor versions — claiming 0.6.0 while the package, `src/version.js`, the `v0.11.0` tag and
+  the published registry entry all said 0.11.0 — and the README ships inside the package `files`
+  allowlist, so that line was wrong on the npmjs.com package page too. `package.json` and
+  `src/version.js` were already locked to each other; the README was simply outside the lock.
+- `CLAUDE.md` was renamed to `CONTRIBUTING.md`, which is what the file actually is.
+- No measurement, derived metric, diagnostic or validity rule changed. `clientVersion` alone moves.
+
 ### `clientVersion` 0.11.0 — 2026-08-03 (thinking-model TTFT disambiguated; duration estimate rebuilt)
 
 Found on `gemma4:31b` (lab run 9, 2026-08-03, RTX 3080, severe CPU/GPU split-mode offload) — the
