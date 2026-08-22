@@ -65,7 +65,7 @@ of the other two moves *with* it.
 | TTFT counts the first token in the *thinking* channel too (client 0.7.0) | **client** | Conformance to §5.2's existing "first streamed token" wording. Non-thinking runs are byte-identical; the fix only turned a wrong `null` into a real number |
 | Placement diagnostics stop asserting "CPU-only" when the runtime reports the model resident in VRAM (scoring 1.5) | **scoring** | Derivation rules changed; the raw `/api/ps` bytes did not |
 | §3's OS row gains an enforcing §4 condition (client 0.13.0) | **client** | Enforcement of a limit §3 always documented, through refuse/override machinery that already existed. No workload, fixed parameter or timing rule changed |
-| §4 gains a prompt-band precondition (proposed, #32) | **client** | Same shape: §5.4's band and truncation rules are asked earlier, by the same shared implementation. A prompt the check admits is one §5.4 already accepted |
+| §4 gains a prompt-band precondition (client 0.13.0) | **client** | Same shape: §5.4's band and truncation rules are asked earlier, by the same shared implementation. A prompt the check admits is one §5.4 already accepted |
 
 The last two are the ones worth studying, because both *look* like protocol changes — a new
 refusal condition is user-visible and can stop a run that previously completed. Neither changes
