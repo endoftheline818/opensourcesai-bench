@@ -533,6 +533,13 @@ export async function runBenchmark({
   if (captureWorkloads) {
     await onFixtureCapture({
       model,
+      // Read back off the finished record rather than re-derived from
+      // runtimeDetection, so the fixture's runtime identity and the result's
+      // cannot drift apart: there is only one place either can come from.
+      runtime: {
+        name: record.runtime.name,
+        version: record.runtime.version,
+      },
       tagsResponse: tagsRaw,
       showResponse: showRaw,
       // The same /api/ps entry extractOffloadPlacement reads, so a captured

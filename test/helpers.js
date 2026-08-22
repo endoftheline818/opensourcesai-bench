@@ -153,7 +153,14 @@ export class FixtureAdapter {
   }
 
   async detect() {
-    return { available: true, raw: { version: "fixture" } };
+    // Replay the runtime the fixture was captured on when it recorded one.
+    // Otherwise a replayed record would report a placeholder version, which is
+    // the provenance gap capturing it was meant to close: a fixture that knows
+    // which runtime produced its numbers should say so on replay too.
+    return {
+      available: true,
+      raw: { version: this.fixture.runtime?.version ?? "fixture" },
+    };
   }
 
   async listModels() {
