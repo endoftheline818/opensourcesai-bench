@@ -2,13 +2,14 @@ import {
   buildCallPrompt,
   FIXED_OPTIONS,
   MAX_RETRIES,
+  PROBE_CALL_INDEX,
   PROTOCOL_VERSION,
   SCORING_VERSION,
   WORKLOADS,
 } from "./protocol.js";
 import { CLIENT_VERSION } from "./version.js";
 import { deriveMetrics } from "./derivation/metrics.js";
-import { validatePass } from "./derivation/validity.js";
+import { checkPromptFit, validatePass } from "./derivation/validity.js";
 import {
   extractLayerAssignment,
   extractKvCacheMetadata,
@@ -258,6 +259,83 @@ function createCallCounter() {
   return () => next++;
 }
 
+// §4 model-protocol fit, checked before anything is measured.
+//
+// A model whose tokenizer and chat template put prompt_eval_count outside a
+// workload's band fails every measured pass of that workload -- deterministic,
+// not flaky, since temperature and seed are protocol constants (§5.1). The
+// validity rule catching it is correct and stays exactly as strict; the defect
+// was purely that the failure was discoverable only after paying for it. On a
+// Raspberry Pi 4B, `tinyllama:latest` burned about 13 minutes to produce a
+// report whose generation, prefill and TTFT were all unavailable, and the
+// cause was visible nowhere in the human-readable output.
+//
+// bandMidpoint (see tokenPools) sizes the schedule toward the middle of each
+// band, but it is a planning figure and says so; nothing reconciled a real
+// tokenizer against a real band before the measurement loop began. This does.
+//
+// Deliberately NOT covered: the other way a model fails the protocol
+// deterministically -- stopping generation before num_predict, as
+// phi3:3.8b-mini-128k-instruct-fp16 does at exactly 107 tokens under both a
+// 128- and a 512-token budget (§12.1a). A prompt's token count is a property
+// of the tokenizer and template, knowable from one cheap prefill. Early EOS is
+// a property of generation and the only way to know it is to generate, which
+// costs a workload's whole budget. Refusing on a band the run can check for a
+// few seconds is not the same trade as refusing on a behaviour it would have
+// to spend minutes to observe, so this gate claims only the first and the
+// spec says so rather than implying coverage it does not have.
+async function checkPromptBands(adapter, model, onProgress) {
+  if (typeof adapter.probePrompt !== "function") return [];
+
+  // W2 and W4 send the same prompt at the same num_ctx against the same band,
+  // so one probe answers for both. Probing per workload would double the cost
+  // to buy a second copy of the same number.
+  const probes = new Map();
+  for (const workload of Object.values(WORKLOADS)) {
+    if (workload.promptTokenRange === null) continue;
+    const probeWorkload = callWorkload({ ...workload, model }, PROBE_CALL_INDEX);
+    const key = `${probeWorkload.prompt} ${workload.numCtx}`;
+    const existing = probes.get(key);
+    if (existing) {
+      existing.workloadIds.push(workload.id);
+      continue;
+    }
+    probes.set(key, { workload: probeWorkload, workloadIds: [workload.id] });
+  }
+
+  const issues = [];
+  for (const { workload, workloadIds } of probes.values()) {
+    const label = workloadIds.map((id) => id.toUpperCase()).join("/");
+    progress(onProgress, `Checking ${label} prompt fit for ${model}`);
+    const measurement = extractRawMeasurement(
+      await adapter.probePrompt(model, workload),
+    );
+    const promptTokens = measurement?.prompt_eval_count;
+    // An inconclusive probe is not evidence of a bad model. A runtime that
+    // reports no prompt token count cannot convict one, so the run proceeds
+    // and §5.4 stays the backstop it always was.
+    if (typeof promptTokens !== "number" || !Number.isFinite(promptTokens)) {
+      continue;
+    }
+    for (const reason of checkPromptFit(promptTokens, workload)) {
+      issues.push({
+        code: `${reason.code}-precondition`,
+        workloads: [...workloadIds],
+        actual: reason.actual ?? promptTokens,
+        // The operator can change the model; they cannot change what this
+        // model's tokenizer does with a fixed prompt. Neither existing
+        // guidance branch fits, so the issue says which one it needs.
+        resolution: "select-a-different-model",
+        message:
+          `${model} produces ${promptTokens} prompt tokens for ` +
+          `${label} — ${reason.message}. Every measured ${label} pass would ` +
+          "fail validity, and its throughput would be reported as unavailable",
+      });
+    }
+  }
+  return issues;
+}
+
 async function collectAttempt(adapter, workload, callIndex) {
   const raw = await adapter.generate(
     workload.model,
@@ -424,6 +502,31 @@ export async function runBenchmark({
   if (resolvedPreconditions.issues.length > 0 && !qualityOverride) {
     throw new QualityRefusalError(resolvedPreconditions.issues);
   }
+  // Ordered after the machine-state gate on purpose: the probe loads the
+  // model, and loading a model onto a contended, battery-limited or
+  // out-of-scope machine is precisely what that gate exists to prevent. It is
+  // ordered before W1 for the same reason W1 can tolerate it — W1 forces an
+  // unload before every attempt, so its cold-load timing is unaffected by a
+  // model the probe left resident.
+  const promptBandIssues = await checkPromptBands(adapter, model, onProgress);
+  if (promptBandIssues.length > 0 && !qualityOverride) {
+    // Unload before refusing. Probing loads the model and its keep_alive holds
+    // it resident for five minutes, so a refusal would otherwise leave the
+    // rejected model in place and the operator's obvious next move -- run
+    // again with a different model -- would hit "Ollama already has non-target
+    // model X loaded". Found on the rig, not in a test: a refused
+    // qwen2.5:7b-instruct-q8_0 blocked the llama3.1:8b run that followed it.
+    //
+    // A run that proceeds needs no equivalent, because W1 force-unloads before
+    // every attempt by design. And a failure to unload must not mask the
+    // refusal: the refusal is the answer, the unload is only courtesy.
+    try {
+      await adapter.forceUnload(model);
+    } catch {
+      // Intentionally ignored.
+    }
+    throw new QualityRefusalError(promptBandIssues);
+  }
   const bandwidth = resolveGpuMemoryBandwidth({
     manualGBps: memoryBandwidthGBps,
     model: resolvedPreconditions.system.gpu.model,
@@ -484,7 +587,10 @@ export async function runBenchmark({
     createdAt: new Date().toISOString(),
     qualityOverride,
     cohortEligible: !qualityOverride,
-    qualityConditions: publicQualityConditions(resolvedPreconditions.issues),
+    qualityConditions: publicQualityConditions([
+      ...resolvedPreconditions.issues,
+      ...promptBandIssues,
+    ]),
     runtime: {
       name: "ollama",
       version: runtimeDetection.raw.version ?? null,

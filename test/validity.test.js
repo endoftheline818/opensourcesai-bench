@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validatePass } from "../src/derivation/validity.js";
+import { checkPromptFit, validatePass } from "../src/derivation/validity.js";
 import { WORKLOADS } from "../src/protocol.js";
 
 const valid = {
@@ -121,4 +121,31 @@ test("prompt_eval_count reaching num_ctx is treated as truncation", () => {
   assert.ok(
     w1Truncated.reasons.some((reason) => reason.code === "prompt-truncated"),
   );
+});
+
+// #25: the §4 probe and the §5.4 per-pass check must be one rule, not two
+// implementations of it. If they ever diverge, a run is refused up front for a
+// band it would have satisfied, or admitted to one it cannot -- and the second
+// case reintroduces exactly the defect the probe exists to remove.
+test("the precondition probe and the per-pass check apply the same prompt rules", () => {
+  const cases = [
+    { workload: WORKLOADS.w2, counts: [19, 20, 32, 64, 65, 4096, null] },
+    { workload: WORKLOADS.w3, counts: [1999, 2000, 2664, 4095, 4096] },
+    { workload: WORKLOADS.w4, counts: [19, 68, 76, 81] },
+    // W1 has no band, so only the universal truncation rule applies to it.
+    { workload: WORKLOADS.w1, counts: [5, 511, 512] },
+  ];
+  for (const { workload, counts } of cases) {
+    for (const promptTokens of counts) {
+      const fromPass = validatePass(
+        { ...valid, eval_count: workload.numPredict, prompt_eval_count: promptTokens },
+        workload,
+      ).reasons.filter((reason) => reason.code.startsWith("prompt-"));
+      assert.deepEqual(
+        checkPromptFit(promptTokens, workload),
+        fromPass,
+        `${workload.id} at ${promptTokens} prompt tokens`,
+      );
+    }
+  }
 });

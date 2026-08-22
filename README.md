@@ -246,6 +246,22 @@ resident-model check necessarily follows model selection. If Ollama cannot be
 reached at any point, the error names the exact
 `http://127.0.0.1:11434` endpoint and tells the user to start Ollama and retry.
 
+A run is also refused when the **selected model** cannot satisfy the protocol —
+when its tokenizer and chat template put the prompt outside a workload's token
+band, or long enough that the runtime truncates it. Every measured pass of that
+workload would fail validity and its throughput would be reported as
+`unavailable`, so the run says which counts it found and which bands they
+missed, and stops. The check costs one model load and two short requests (7.5
+seconds on an RTX 3080); without it the same outcome takes the whole protocol
+to discover, which was about 13 minutes on a Raspberry Pi 4B. It cannot be
+resolved by retrying or by changing anything about the machine — the counts are
+a property of the model — so its guidance says to select a different one.
+
+`--quality-override` governs this phase and the conditions above it. It does
+**not** relax the per-pass validity checks: an overridden run executes the full
+protocol and still reports every invalid pass as a failure, with `unavailable`
+in place of any figure it did not actually measure.
+
 NVIDIA utilization, VRAM, driver version, and compute-process memory use
 `nvidia-smi`. When it is unavailable, the collector falls back to Windows CIM
 or Linux DRM sysfs for the hardware fields those interfaces expose. Missing

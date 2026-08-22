@@ -22,7 +22,13 @@ Runs the complete ${PROTOCOL_VERSION} protocol against Ollama on this machine.
 Options:
   --model <name>                 Select an installed model non-interactively
   --memory-bandwidth <GB/s>      Override auto-detected GPU memory bandwidth
-  --quality-override             Run despite detected quality preconditions
+  --quality-override             Run despite refused §4 preconditions. Governs
+                                 the precondition phase only — it does NOT
+                                 relax the §5.4 per-pass validity checks, so an
+                                 overridden run still reports an invalid pass
+                                 as a failure and its throughput as
+                                 unavailable. The result is permanently marked
+                                 cohort-ineligible.
   --output <path>                Result JSON path (must not already exist).
                                  Default: a timestamped file in
                                  ~/.osai/bench-results/
@@ -49,15 +55,48 @@ Ollama at http://127.0.0.1:11434.`;
 // so this keys on `some`, not on `every`. A Mac with a stray model loaded has
 // one clearable condition and one that never clears; retrying still cannot
 // produce a clean run, and the guidance has to say so.
+//
+// The prompt-fit conditions add a third case, and neither existing branch is
+// right for it. "Resolve and retry" is wrong because nothing about the machine
+// is at fault; "a property of the machine, not of its current state" is wrong
+// in the other direction, because the machine is fine and it is the model that
+// cannot satisfy the protocol. The one action that works — pick a different
+// model — appears in neither, so the issue names the guidance it needs and
+// this function honours it.
 function refusalGuidance(issues) {
-  const unresolvable = issues.some((issue) => issue.resolvable === false);
-  return unresolvable
-    ? "\nRetrying will not clear this — it is a property of the machine, not of its current " +
+  const wrongModel = issues.some(
+    (issue) => issue.resolution === "select-a-different-model",
+  );
+  const unresolvable = issues.some(
+    (issue) =>
+      issue.resolvable === false &&
+      issue.resolution !== "select-a-different-model",
+  );
+  const guidance = [];
+  if (wrongModel) {
+    guidance.push(
+      "\nThis is a property of the model, not of this machine or this moment: the counts above " +
+        "come from its tokenizer and chat template and will be identical on every rerun and " +
+        "every machine. Select a different model — retrying this one changes nothing. To record " +
+        "the failure anyway, rerun with --quality-override: the protocol runs in full and " +
+        "reports its throughput figures as unavailable, permanently marked cohort-ineligible.\n",
+    );
+  }
+  if (unresolvable) {
+    guidance.push(
+      "\nRetrying will not clear this — it is a property of the machine, not of its current " +
         "state. To measure anyway, rerun with --quality-override: the run proceeds normally and " +
         "the JSON is permanently marked cohort-ineligible, which keeps it out of comparisons " +
-        "without discarding your numbers.\n"
-    : "\nResolve these conditions and retry. To preserve a knowingly non-standard run, " +
-        "rerun with --quality-override; the JSON will be permanently marked and cohort-ineligible.\n";
+        "without discarding your numbers.\n",
+    );
+  }
+  if (guidance.length === 0) {
+    guidance.push(
+      "\nResolve these conditions and retry. To preserve a knowingly non-standard run, " +
+        "rerun with --quality-override; the JSON will be permanently marked and cohort-ineligible.\n",
+    );
+  }
+  return guidance.join("");
 }
 
 function parseArguments(argv) {
