@@ -73,6 +73,29 @@ Use `--quality-override` only for a deliberately non-standard run. The result
 is permanently marked `"qualityOverride": true` and
 `"cohortEligible": false`.
 
+### Check a stored result
+
+```sh
+npx @opensourcesai/bench --verify ~/.osai/bench-results/<result>.json
+```
+
+Re-derives a saved result from its own raw measurements and reports anything
+that does not follow from them: a figure that disagrees with the measurements
+it claims to summarise, a per-pass validity verdict that is not the one the
+rules return, or a configuration that does not match the protocol version the
+record states. It reads one local file, runs no benchmark, and needs no Ollama
+or GPU, because the derivation layer is pure -- so a reader who did not produce
+a result can still check it.
+
+Exit codes: `0` consistent, `4` inconsistent, `1` unreadable.
+
+**This establishes internal consistency, not authenticity.** A record whose
+measurements were invented and then made self-consistent passes every check,
+because every check is computable by whoever invented them. No client-side
+mechanism can establish that a measurement really happened, and a hash or a
+signature would not change that. See
+[`spec/result-integrity-v1.md`](spec/result-integrity-v1.md).
+
 ### Capture a real fixture
 
 Fixture capture is opt-in and writes a second file alongside the normal result:

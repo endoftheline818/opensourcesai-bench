@@ -23,6 +23,7 @@ test("CLI parses non-interactive protocol arguments", () => {
       outputPath: "result.json",
       captureFixturePath: "fixtures/rtx-4070-ti.json",
       fixtureLabel: "rtx-4070-ti-partial-offload",
+      verifyPath: null,
       help: false,
     },
   );
@@ -175,4 +176,38 @@ test("--quality-override help distinguishes the precondition gate from the valid
   assert.match(text, /--quality-override/);
   assert.match(text, /does NOT\s+relax the §5\.4 per-pass validity checks/);
   assert.match(text, /cohort-ineligible/);
+});
+
+// #15: --verify inspects a stored result rather than configuring a run.
+test("--verify parses on its own and refuses to share an invocation with a run", () => {
+  assert.equal(
+    __test.parseArguments(["--verify", "result.json"]).verifyPath,
+    "result.json",
+  );
+  assert.equal(
+    __test.parseArguments(["--verify=result.json"]).verifyPath,
+    "result.json",
+  );
+  // Every other option configures a run that is about to happen. Asking for
+  // both in one invocation can only be a mistake, and silently ignoring one
+  // half is the worst way to resolve it.
+  for (const conflicting of [
+    ["--model", "qwen3:8b"],
+    ["--output", "out.json"],
+    ["--quality-override"],
+    ["--memory-bandwidth", "760"],
+  ]) {
+    assert.throws(
+      () => __test.parseArguments(["--verify", "result.json", ...conflicting]),
+      /takes no other options/,
+      conflicting.join(" "),
+    );
+  }
+});
+
+test("help describes --verify as consistency checking, never as verification of a measurement", () => {
+  const text = __test.usage();
+  assert.match(text, /--verify <path>/);
+  assert.match(text, /internal consistency, never\s+authenticity/);
+  assert.match(text, /needs\s+no\s+Ollama/);
 });

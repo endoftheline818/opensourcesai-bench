@@ -23,3 +23,4 @@ export {
   ENVIRONMENT_DECLARATION_SOURCE,
   OLLAMA_ENVIRONMENT_VARIABLES,
 } from "./environment.js";
+export { verifyResult } from "./verify.js";
