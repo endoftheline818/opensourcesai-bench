@@ -185,6 +185,26 @@ export const FIXED_OPTIONS = Object.freeze({
 // Pure function of (workload.id, callIndex): the exact text for any call is
 // reconstructible from the protocol version and the call sequence alone, so no
 // raw-record schema change is needed to keep this reproducible.
+// The call index the §4 prompt-fit probe uses. Measured call indices start at
+// 0 and only increase, so a negative one can never collide with a measured
+// call's cache-bust marker — and W3's marker must diverge from token 0 on
+// every request, or the probe would seed the very prefix cache W3 exists to
+// defeat (see WORKLOADS.w3.varyPromptPerCall).
+//
+// The cost of that guarantee is a one-token approximation, measured on the rig
+// against llama3.1:8b rather than assumed: W3's base prompt is 2,650 tokens,
+// every measured marker (`w3#0`, `w3#5`, `w3#12`) brings it to 2,664, and the
+// probe's `w3#-1` to 2,665, because the minus sign tokenizes on its own. So
+// the probe reads one token high, and W2/W4 are unaffected entirely since they
+// carry no marker.
+//
+// One token against W3's 2,000–4,095 band, with 1,431 tokens of headroom under
+// num_ctx, changes no verdict that is not already on the knife edge — and it
+// errs toward refusing a prompt sitting within a token of the ceiling rather
+// than admitting one, which is the safe direction for a check whose whole
+// purpose is to catch prompts that will not fit.
+export const PROBE_CALL_INDEX = -1;
+
 export function buildCallPrompt(workload, callIndex) {
   if (!workload.varyPromptPerCall) return workload.prompt;
   return `[osai-bench cache-bust ${workload.id}#${callIndex}] ${workload.prompt}`;
