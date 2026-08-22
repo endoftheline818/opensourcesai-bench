@@ -42,6 +42,9 @@ Every result record carries three independent versions:
 | `clientVersion` | The npm package version that produced the record. |
 | `scoringVersion` | The derivation rules applied to raw measurements. |
 
+How these versions are allowed to move, and what must be true before v1 can be frozen, is
+governed by [`change-control-v1.md`](change-control-v1.md).
+
 **Raw measurements are immutable and are the source of truth. All derived figures are
 recomputable from them.** A scoring change must never orphan history — it recomputes it.
 Records whose `protocolVersion` differs are never pooled or compared. In particular,

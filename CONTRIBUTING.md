@@ -23,7 +23,9 @@ affects what is measured, how it is measured, or how results are derived.
 Every decision in it was made deliberately, with the reasoning recorded in the document and in
 the commit that added it. **Do not re-derive, "improve", simplify, or quietly deviate from it.**
 If something in it is wrong, say so and leave the code conforming — then change the spec in its
-own commit, with the rationale, and bump the protocol version.
+own commit, with the rationale, and bump the protocol version. **`spec/change-control-v1.md` gives
+the rule for which version a change moves**, with worked examples from this repository's own
+history — including two changes that look like protocol changes and are not.
 
 **`spec/coverage-v1.md` records what has actually been validated**, as opposed to what §3 says is
 in scope. Consult it before claiming a configuration works, and add to it by capturing a fixture
