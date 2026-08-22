@@ -75,7 +75,9 @@ fixtures of real recorded responses in `fixtures/` — including at least one fr
 misconfigured setup. This is what makes the protocol safe to evolve later. Do not retrofit it.
 
 **Raw measurements are immutable and authoritative.** Every derived figure is recomputable from
-them, so a scoring change recomputes history rather than orphaning it.
+them, so a scoring change recomputes history rather than orphaning it. `--verify` makes that
+claim executable against any stored result -- see `spec/result-integrity-v1.md`, which also
+states plainly what a client-side check can never establish.
 
 ## Release gate
 

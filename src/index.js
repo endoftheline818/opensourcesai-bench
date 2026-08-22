@@ -10,6 +10,7 @@ export {
 } from "./fixture-format.js";
 export * from "./derivation/index.js";
 export { renderReport } from "./output/report.js";
+export { renderVerifyReport } from "./output/verify-report.js";
 export {
   buildFixtureCapture,
   renderFixtureCaptureSummary,

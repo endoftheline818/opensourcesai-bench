@@ -3,8 +3,9 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { OllamaAdapter } from "./adapters/ollama.js";
-import { PROTOCOL_VERSION } from "./protocol.js";
+import { PROTOCOL_VERSION, SCORING_VERSION, WORKLOADS } from "./protocol.js";
 import { QualityRefusalError, runBenchmark } from "./benchmark.js";
 import { matchGpuMemoryBandwidth } from "./derivation/gpu-bandwidth.js";
 import { renderReport } from "./output/report.js";
@@ -13,6 +14,8 @@ import {
   writeFixtureCapture,
 } from "./output/fixture-writer.js";
 import { writeResult } from "./output/writer.js";
+import { verifyResult } from "./derivation/verify.js";
+import { renderVerifyReport } from "./output/verify-report.js";
 
 function usage() {
   return `Usage: osai-bench [options]
@@ -34,6 +37,12 @@ Options:
                                  ~/.osai/bench-results/
   --capture-fixture <path>       Also save a real-hardware fixture (no overwrite)
   --fixture-label <text>         Required label for --capture-fixture
+  --verify <path>                Re-derive a stored result from its own raw
+                                 measurements and report any figure or validity
+                                 verdict that does not follow from them. Reads
+                                 one local file, runs no benchmark, and needs no
+                                 Ollama. Establishes internal consistency, never
+                                 authenticity
   --help                         Show this help
 
 Example fixture capture:
@@ -107,6 +116,7 @@ function parseArguments(argv) {
     outputPath: null,
     captureFixturePath: null,
     fixtureLabel: null,
+    verifyPath: null,
     help: false,
   };
   const valueOptions = new Map([
@@ -115,6 +125,7 @@ function parseArguments(argv) {
     ["--output", "outputPath"],
     ["--capture-fixture", "captureFixturePath"],
     ["--fixture-label", "fixtureLabel"],
+    ["--verify", "verifyPath"],
   ]);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -147,6 +158,20 @@ function parseArguments(argv) {
     ) {
       throw new Error("--memory-bandwidth must be a positive number");
     }
+  }
+  // --verify inspects a file that already exists; every other option
+  // configures a run that is about to happen. Combining them asks for two
+  // different jobs in one invocation and can only be a mistake.
+  if (
+    result.verifyPath !== null &&
+    (result.model !== null ||
+      result.memoryBandwidthGBps !== null ||
+      result.qualityOverride ||
+      result.outputPath !== null ||
+      result.captureFixturePath !== null ||
+      result.fixtureLabel !== null)
+  ) {
+    throw new Error("--verify inspects a stored result and takes no other options");
   }
   if (result.captureFixturePath !== null && result.fixtureLabel === null) {
     throw new Error("--capture-fixture requires --fixture-label");
@@ -215,6 +240,33 @@ async function askBandwidth(readline) {
   return value;
 }
 
+// Reads one local file and re-derives it. No adapter, no Ollama, no network --
+// the derivation layer is pure by construction (§10), which is exactly what
+// makes this runnable anywhere, including on a machine that has never run the
+// benchmark and by a reader who did not produce the record.
+async function verifyStoredResult(requestedPath) {
+  const resolved = path.resolve(requestedPath);
+  let record;
+  try {
+    record = JSON.parse(await readFile(resolved, "utf8"));
+  } catch (error) {
+    process.stderr.write(
+      `Could not read a result from ${resolved}\n${error.message}\n`,
+    );
+    return 1;
+  }
+  const report = verifyResult(record, {
+    workloads: WORKLOADS,
+    protocolVersion: PROTOCOL_VERSION,
+    scoringVersion: SCORING_VERSION,
+  });
+  output.write(`${renderVerifyReport(report, { path: resolved })}\n`);
+  // A distinct code from 1: a record that fails to parse and a record that
+  // parses and disagrees with itself are different outcomes, and a script
+  // checking a corpus needs to tell them apart.
+  return report.consistent ? 0 : 4;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   let args;
   try {
@@ -227,6 +279,7 @@ export async function main(argv = process.argv.slice(2)) {
     output.write(`${usage()}\n`);
     return 0;
   }
+  if (args.verifyPath !== null) return verifyStoredResult(args.verifyPath);
 
   output.write(
     `OpenSourcesAI Bench — local-only ${PROTOCOL_VERSION}\n` +
@@ -337,4 +390,9 @@ if (
   process.exitCode = await main();
 }
 
-export const __test = { parseArguments, usage, refusalGuidance };
+export const __test = {
+  parseArguments,
+  usage,
+  refusalGuidance,
+  verifyStoredResult,
+};
