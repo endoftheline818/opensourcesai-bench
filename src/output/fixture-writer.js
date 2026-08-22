@@ -23,6 +23,7 @@ const REDACTION_NOTES = Object.freeze([
   "Prompt and request bodies are never captured.",
   "Path-like model identifiers are replaced with [REDACTED_LOCAL_PATH].",
   "/api/ps is allowlisted to size, size_vram and the model name; expires_at and all other fields are omitted.",
+  "/api/version is allowlisted to the runtime name and version string; nothing else is retained.",
 ]);
 
 function isPlainObject(value) {
@@ -41,6 +42,16 @@ function safeIdentifier(value, redactedFields, field) {
   if (!hasLocalPath(value)) return value;
   redactedFields.push(field);
   return "[REDACTED_LOCAL_PATH]";
+}
+
+// A version string is short, single-line free text. Anything else is not a
+// version, and is dropped rather than widening the envelope by accident.
+function safeVersionString(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 100) return null;
+  if (/[\r\n]/.test(trimmed)) return null;
+  return trimmed;
 }
 
 function selectedTagsResponse(tagsResponse, selectedModel, redactedFields) {
@@ -169,6 +180,35 @@ function sanitizedPsResponse(psEntry, redactedFields) {
   return result;
 }
 
+// The runtime that produced the measurements, allowlisted to its name and
+// version string.
+//
+// Without this a fixture cannot answer "which runtime produced these numbers?"
+// — which is the question it exists for the moment a later run disagrees. That
+// is not hypothetical: comparing two RTX 3080 runs across an Ollama upgrade
+// (0.30.10 -> 0.32.5), the only way to establish which runtime the baseline
+// fixture had been captured on was separately-held knowledge of that machine's
+// pre-upgrade state. The conclusion held, but nothing in the fixture could have
+// falsified it. The value was already fetched from /api/version and already
+// recorded in the result record; it simply never reached the fixture envelope.
+//
+// Name and version only. Ollama exposes no endpoint reporting its resolved
+// server configuration (§8.4), so the fixture must not imply it captured one.
+function sanitizedRuntime(runtime, redactedFields) {
+  if (!isPlainObject(runtime)) return null;
+  const name = safeVersionString(runtime.name);
+  if (!name) return null;
+  const result = { name };
+  // Absent and unreported are the same state to a reader and both record null:
+  // a runtime that answers /api/version with nothing is no more identifiable
+  // than one never asked.
+  const version = safeVersionString(runtime.version);
+  result.version = version
+    ? safeIdentifier(version, redactedFields, "runtime.version")
+    : null;
+  return result;
+}
+
 function sanitizedWorkloadResponse(response) {
   const chunks = Array.isArray(response?.chunks) ? response.chunks : [];
   const final = [...chunks].reverse().find((chunk) => chunk?.done === true);
@@ -216,6 +256,7 @@ export function buildFixtureCapture({
   label,
   capturedAt,
   model,
+  runtime,
   tagsResponse,
   showResponse,
   psResponse,
@@ -264,6 +305,12 @@ export function buildFixtureCapture({
   // valid state the placement derivation already handles by returning null.
   const sanitizedPs = sanitizedPsResponse(psResponse, redactedFields);
   if (sanitizedPs) fixture.psResponse = sanitizedPs;
+  // Optional on the same terms as psResponse: fixtures captured before this
+  // field existed have no runtime block, and absent stays a valid state rather
+  // than a loader rejection. It is recorded after psResponse so the key order
+  // of an existing fixture is unchanged by recapture.
+  const capturedRuntime = sanitizedRuntime(runtime, redactedFields);
+  if (capturedRuntime) fixture.runtime = capturedRuntime;
   return validateFixtureFormat(fixture);
 }
 
@@ -317,6 +364,13 @@ export function renderFixtureCaptureSummary({ outputPath, fixture }) {
     ...(fixture.psResponse
       ? [`- psResponse: ${keys(fixture.psResponse)}`]
       : ["- psResponse: not reported by the runtime at snapshot time"]),
+    ...(fixture.runtime
+      ? [
+          `- runtime: ${fixture.runtime.name} ${
+            fixture.runtime.version ?? "(version not reported)"
+          }`,
+        ]
+      : ["- runtime: not identified at capture time"]),
     `- workload response: chunks[0] (${keys(finalChunk)}), timeToFirstTokenMs, timeToFirstVisibleTokenMs`,
     `- workload slots/attempts: ${Object.entries(fixture.workloads)
       .map(

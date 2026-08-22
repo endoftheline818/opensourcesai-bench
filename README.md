@@ -107,8 +107,20 @@ The fixture is deliberately narrower than the normal result:
 - `workloads` contains ordered scheduled slots; every slot is an array of raw
   attempt responses, each reduced by the same numeric allowlist to one final
   measurement chunk plus client-observed TTFT. Measured slots retain one to
-  three attempts, while W2/W3/W4 warmup slots retain exactly one; and
+  three attempts, while W2/W3/W4 warmup slots retain exactly one;
+- `psResponse` contains only the loaded model's resident and VRAM-resident
+  byte figures plus its identifier, which is what the placement diagnostics
+  read;
+- `runtime` contains only the runtime's name and its version string, so the
+  fixture can answer which runtime produced its numbers rather than leaving
+  that to be inferred from whatever someone happens to remember about the
+  machine; and
 - capture metadata and redaction notes occupy the remaining top-level fields.
+
+`psResponse` and `runtime` are both optional. Fixtures captured before either
+field existed stay valid and load unchanged — placement degrades to
+`unavailable` and the runtime reads as unidentified, which is the honest state
+for a capture that never recorded one. Neither is backfilled by hand.
 
 It never writes the other installed models, prompts or request bodies, model
 output, intermediate streamed chunks, Modelfile, prompt template, license,
