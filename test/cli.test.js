@@ -132,3 +132,47 @@ test("one unresolvable condition makes the whole retry futile, even beside a cle
   assert.match(text, /Retrying will not clear this/);
   assert.doesNotMatch(text, /Resolve these conditions and retry/);
 });
+
+// #25: a third guidance case. A model that cannot satisfy the prompt bands is
+// neither a condition the operator resolves on this machine nor a property of
+// the machine at all — and both existing branches say something false about it.
+test("a model-fit refusal names the one action that works: pick a different model", () => {
+  const text = __test.refusalGuidance([
+    {
+      code: "prompt-count-out-of-range-precondition",
+      resolution: "select-a-different-model",
+      message: "…",
+    },
+  ]);
+  assert.match(text, /Select a different model/);
+  assert.match(text, /property of the model/);
+  assert.doesNotMatch(text, /Resolve these conditions and retry/);
+  // The machine branch is actively wrong here: nothing is wrong with the
+  // machine, and telling the operator otherwise sends them to check hardware.
+  assert.doesNotMatch(text, /property of the machine/);
+  assert.match(text, /--quality-override/);
+});
+
+test("a model-fit refusal beside a machine condition gets both, not one or the other", () => {
+  const text = __test.refusalGuidance([
+    {
+      code: "prompt-count-out-of-range-precondition",
+      resolution: "select-a-different-model",
+      message: "…",
+    },
+    { code: "unsupported-platform", resolvable: false, message: "…" },
+  ]);
+  assert.match(text, /Select a different model/);
+  assert.match(text, /property of the machine/);
+});
+
+test("--quality-override help distinguishes the precondition gate from the validity checks", () => {
+  // The flag reads as though it would force a band-missing model through. It
+  // does not, and never did: it governs the precondition phase, while the
+  // per-pass validity checks are unconditional. Running with it produces the
+  // identical failure rates, which is correct behaviour and misleading help.
+  const text = __test.usage();
+  assert.match(text, /--quality-override/);
+  assert.match(text, /does NOT\s+relax the §5\.4 per-pass validity checks/);
+  assert.match(text, /cohort-ineligible/);
+});

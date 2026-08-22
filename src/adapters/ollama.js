@@ -691,6 +691,33 @@ export class OllamaAdapter {
     });
   }
 
+  // §4 prompt-fit probe: how many prompt tokens does this model actually
+  // produce for this workload's prompt? Same endpoint, same fixed options and
+  // the same num_ctx as the real call, so the count is the one the measured
+  // passes will be validated against — but num_predict is 1, so it costs one
+  // prefill and a single token instead of the workload's full generation
+  // budget.
+  //
+  // 1 rather than 0: a zero budget is not clearly specified to still evaluate
+  // the prompt, and a probe that comes back without a prompt_eval_count
+  // answers nothing. One token is unambiguous and negligible.
+  //
+  // Returns the raw response unmodified, like every other method here. What
+  // the number means is derivation's business, not the adapter's.
+  async probePrompt(model, workload) {
+    return requestNdjson("/api/generate", {
+      model,
+      prompt: workload.prompt,
+      stream: true,
+      keep_alive: workload.keepAlive,
+      options: {
+        ...FIXED_OPTIONS,
+        num_predict: 1,
+        num_ctx: workload.numCtx,
+      },
+    });
+  }
+
   async forceUnload(model) {
     return requestNdjson("/api/generate", {
       model,

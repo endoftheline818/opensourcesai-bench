@@ -176,6 +176,17 @@ export class FixtureAdapter {
     return { chunks: [{ done: true }], timeToFirstTokenMs: null };
   }
 
+  // Replays the prompt token count the fixture already recorded for this
+  // workload, so the §4 prompt-fit gate is exercisable from a committed
+  // fixture with no runtime present — the same property §10 asks of every
+  // other derivation rule. It deliberately does NOT consume a workload slot: a
+  // probe that ate one would desynchronise every replay that followed it.
+  async probePrompt(_model, workload) {
+    const first = this.fixture.workloads[workload.id]?.[0]?.[0];
+    if (!first) return { chunks: [{ done: true }], timeToFirstTokenMs: null };
+    return structuredClone(first);
+  }
+
   async collectSystemSnapshot() {
     return structuredClone(this.system);
   }
