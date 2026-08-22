@@ -103,7 +103,10 @@ unaffected by a model the check left resident.
 The check is one `/api/generate` call per distinct banded prompt with `num_predict: 1` — two
 calls, since W2 and W4 send the same prompt at the same `num_ctx` against the same band. Its
 cost is one model load plus two prefills: **7.5 s measured on an RTX 3080** for both a
-conforming and a non-conforming model. What it replaces is the entire protocol — about 13
+conforming and a non-conforming model. **A refusal must unload the probed model**, because the
+check leaves it resident under its `keep_alive` and would otherwise trip the resident-model
+condition above on the operator's obvious next action — running again with a different model.
+A run that proceeds needs no equivalent, since W1 force-unloads before every attempt. What it replaces is the entire protocol — about 13
 minutes on a Raspberry Pi 4B — spent to produce a report whose generation, prefill and TTFT
 were all `unavailable` and whose cause appeared nowhere in the human-readable output.
 

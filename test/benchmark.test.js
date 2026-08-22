@@ -621,7 +621,32 @@ test("#25: a model whose prompt misses the band is refused before anything is me
     { w1: 0, w2: 0, w3: 0, w4: 0 },
     "no measured pass may run once the model is known not to fit",
   );
+  // Not zero: probing loads the model, and its keep_alive would hold it
+  // resident for five minutes. Leaving it there makes the operator's obvious
+  // next move -- rerun with a different model -- fail on the resident-model
+  // precondition, turning one refusal into two. Found on real hardware.
+  assert.equal(adapter.calls.forceUnload, 1);
+});
+
+test("#25: a refusal that never loaded the model does not unload one", async () => {
+  const adapter = new FakeAdapter({
+    issues: [{ code: "on-battery", message: "System is running on battery" }],
+  });
+  await assert.rejects(() => runBenchmark({ adapter, model: "fixture:8b" }));
   assert.equal(adapter.calls.forceUnload, 0);
+});
+
+test("#25: an unload failure does not mask the refusal it follows", async () => {
+  const adapter = new FakeAdapter({ probePromptTokens: { w2: 68, w4: 68 } });
+  adapter.forceUnload = async () => {
+    throw new Error("runtime went away");
+  };
+  await assert.rejects(
+    () => runBenchmark({ adapter, model: "fixture:8b" }),
+    (error) =>
+      error instanceof QualityRefusalError &&
+      error.issues[0].code === "prompt-count-out-of-range-precondition",
+  );
 });
 
 test("#25: both directions are caught, and each names the workload it belongs to", async () => {

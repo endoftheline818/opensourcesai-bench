@@ -510,6 +510,21 @@ export async function runBenchmark({
   // model the probe left resident.
   const promptBandIssues = await checkPromptBands(adapter, model, onProgress);
   if (promptBandIssues.length > 0 && !qualityOverride) {
+    // Unload before refusing. Probing loads the model and its keep_alive holds
+    // it resident for five minutes, so a refusal would otherwise leave the
+    // rejected model in place and the operator's obvious next move -- run
+    // again with a different model -- would hit "Ollama already has non-target
+    // model X loaded". Found on the rig, not in a test: a refused
+    // qwen2.5:7b-instruct-q8_0 blocked the llama3.1:8b run that followed it.
+    //
+    // A run that proceeds needs no equivalent, because W1 force-unloads before
+    // every attempt by design. And a failure to unload must not mask the
+    // refusal: the refusal is the answer, the unload is only courtesy.
+    try {
+      await adapter.forceUnload(model);
+    } catch {
+      // Intentionally ignored.
+    }
     throw new QualityRefusalError(promptBandIssues);
   }
   const bandwidth = resolveGpuMemoryBandwidth({
